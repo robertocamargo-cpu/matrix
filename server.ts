@@ -25,6 +25,24 @@ app.use(
   })
 );
 
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// Normalize Vercel Serverless Function rewrites
+app.use((req, res, next) => {
+  if (process.env.VERCEL && !req.url.startsWith('/api') && !req.url.startsWith('/assets') && req.url !== '/' && !req.url.includes('.')) {
+    req.url = '/api' + req.url;
+  }
+  next();
+});
+
 app.use(express.json());
 
 // General Rate Limiter for HTTP API endpoints
