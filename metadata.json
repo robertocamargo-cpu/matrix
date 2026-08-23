@@ -1,0 +1,6 @@
+{
+  "name": "Central de Enriquecimento de Leads B2B",
+  "description": "Módulo inteligente para enriquecimento progressivo, auditoria, score dinâmico e playbooks comerciais de leads B2B.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
