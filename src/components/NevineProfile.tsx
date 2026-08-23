@@ -295,6 +295,145 @@ export const NevineProfile: React.FC = () => {
 
         </div>
       </div>
+
+      {/* Detailed Target Roles & Pain Points Matrix Table */}
+      <div className="border border-slate-200 rounded-2xl bg-white p-6 space-y-4 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-150 pb-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-extrabold uppercase bg-amber-100 text-amber-900 px-2.5 py-0.5 rounded-full border border-amber-200">
+                ★ Matriz de Decisão Estratégica
+              </span>
+              <h3 className="text-base font-black text-slate-900 tracking-tight">
+                Cargos Foco Nevine, Dores Resolvidas & Termos Técnicos
+              </h3>
+            </div>
+            <p className="text-xs text-slate-500 font-sans">
+              Mapeamento detalhado dos cargos prioritários por segmento, papel na decisão de compra e linguagem técnica recomendada.
+            </p>
+          </div>
+        </div>
+
+        {/* Roles Table */}
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-900 text-white uppercase text-[10px] tracking-wider font-mono">
+              <tr>
+                <th className="p-3">Cargo Foco</th>
+                <th className="p-3">Setor / Vertical</th>
+                <th className="p-3">Papel / Responsabilidade na Compra</th>
+                <th className="p-3">Principais Dores Resolvidas</th>
+                <th className="p-3">Termos Técnicos Recomendados</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-150 font-sans">
+              {[
+                {
+                  cargo: "Governanta Executiva",
+                  setor: "Hotelaria de Luxo",
+                  papel: "Analisa a qualidade tátil e a conformidade estética com o padrão da marca.",
+                  dores: "Percepção de limpeza, padronização visual e proteção contra contaminação ambiental.",
+                  termos: "Padrão de enxoval, relevo seco, toque de linho, assepsia de leito"
+                },
+                {
+                  cargo: "Gerente de A&B",
+                  setor: "Hotelaria / Resorts",
+                  papel: "Homologa itens para serviço de quarto (room service) e restaurantes internos.",
+                  dores: "Redução de ruído metálico, proteção de talheres em trânsito e agilidade no serviço.",
+                  termos: "Room service, mise en place, envelopados, cap-copo"
+                },
+                {
+                  cargo: "Diretor de Compras",
+                  setor: "Hotelaria Triple A",
+                  papel: "Negocia contratos, valida a saúde financeira do fornecedor e prazos.",
+                  dores: "Ruptura de estoque, inflação de insumos e conformidade com metas de ESG.",
+                  termos: "SLA de entrega, ESG, contrato guarda-chuva, curva ABC"
+                },
+                {
+                  cargo: "Gerente de Motel",
+                  setor: "Motéis Design",
+                  papel: "Centraliza a escolha de fornecedores de higiene e enxoval.",
+                  dores: "Agilidade no giro de suítes, controle de custos fixos e garantia de assepsia.",
+                  termos: "Giro de suíte, envelopamento lacrado, desinfecção express, OPEX"
+                },
+                {
+                  cargo: "Guest Experience Manager",
+                  setor: "Luxo / Boutique",
+                  papel: "Avalia o impacto sensorial e emocional dos descartáveis.",
+                  dores: "Quebra de expectativa de luxo e falta de personalização da jornada.",
+                  termos: "Touchpoints de marca, relevo sem tinta, branding sensorial, NPS"
+                },
+                {
+                  cargo: "Coordenador de SCIH",
+                  setor: "Hospitais / Clínicas de Elite",
+                  papel: "Validador técnico de segurança e assepsia.",
+                  dores: "Contaminação cruzada, riscos biológicos e adesão a normas da Anvisa.",
+                  termos: "Barreira física, RDC 45, assepsia, patógenos"
+                },
+                {
+                  cargo: "Gestor de Hotelaria Hospitalar",
+                  setor: "Hospitais / Clínicas de Elite",
+                  papel: "Decide pela estética e conforto do ambiente.",
+                  dores: "Impessoalidade do hospital, satisfação do paciente e humanização.",
+                  termos: "Conforto térmico, design inclusivo, experiência do paciente"
+                },
+                {
+                  cargo: "Nutricionista Responsável (RT)",
+                  setor: "Hospitais / SND",
+                  papel: "Decide sobre a proteção de utensílios na dieta.",
+                  dores: "Segurança alimentar, agilidade no serviço de copearia e higiene visual.",
+                  termos: "Dieta pastosa/livre, protocolo de bandeja, lacre de segurança"
+                },
+                {
+                  cargo: "Gerente de Suprimentos Hospitalares",
+                  setor: "Hospitais de Elite",
+                  papel: "Homologação de fornecedores e gestão de custos.",
+                  dores: "Ruptura de insumos críticos e gestão de resíduos de saúde.",
+                  termos: "Padronização de SKU, lote de fabricação, rastreabilidade"
+                },
+                {
+                  cargo: "Maître d'Hôtel",
+                  setor: "Restaurantes Premium",
+                  papel: "Apresentação e protocolo de serviço.",
+                  dores: "Higiene percebida, etiqueta à mesa e organização do salão.",
+                  termos: "Mise en place, couvert, serviço à francesa"
+                },
+                {
+                  cargo: "Chef Executivo",
+                  setor: "Alta Gastronomia",
+                  papel: "Harmonia estética e identidade da marca.",
+                  dores: "Despadronização visual e interferência no design do prato.",
+                  termos: "Empratamento, guarnição, identidade visual"
+                },
+                {
+                  cargo: "Sommelier",
+                  setor: "Restaurantes Premium",
+                  papel: "Proteção de taças e acessórios de vinho.",
+                  dores: "Odores residuais no cristal e poeira em taças pré-montadas.",
+                  termos: "Polimento de cristal, decantação, serviço de vinhos"
+                },
+                {
+                  cargo: "Gerente de Operações",
+                  setor: "Restaurantes Premium",
+                  papel: "Eficiência financeira e logística.",
+                  dores: "Custos de lavanderia, perdas de enxoval e demora no giro de mesas.",
+                  termos: "Food cost, giro de mesa, OPEX (Operational Excellence)"
+                }
+              ].map((row, idx) => (
+                <tr key={idx} className={idx % 2 === 0 ? 'bg-white hover:bg-slate-50' : 'bg-slate-50/60 hover:bg-slate-100/80'}>
+                  <td className="p-3 font-extrabold text-slate-900 flex items-center gap-1.5">
+                    <span className="text-amber-500">★</span> {row.cargo}
+                  </td>
+                  <td className="p-3 text-slate-700 font-semibold">{row.setor}</td>
+                  <td className="p-3 text-slate-600 leading-relaxed">{row.papel}</td>
+                  <td className="p-3 text-emerald-950 font-medium bg-emerald-50/50">{row.dores}</td>
+                  <td className="p-3 font-mono text-[11px] text-indigo-900 bg-indigo-50/30">{row.termos}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 };
