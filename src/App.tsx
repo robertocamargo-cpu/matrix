@@ -1646,6 +1646,26 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans antialiased pb-12">
+      {/* 200x200px Centered Research Overlay Banner (Black 50% opacity, Large Blue Bold %) */}
+      {isEnriching && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm pointer-events-auto">
+          <div className="w-[200px] h-[200px] bg-black/80 rounded-3xl border border-blue-500/50 shadow-2xl flex flex-col items-center justify-center p-4 text-center space-y-2 animate-pulse">
+            <div className="text-5xl font-black text-blue-500 tracking-tighter drop-shadow-[0_0_15px_rgba(59,130,246,0.5)] font-mono">
+              {enrichmentProgress}%
+            </div>
+            <span className="text-[11px] font-bold text-blue-400 uppercase tracking-widest leading-tight">
+              Pesquisando Lead...
+            </span>
+            <div className="w-28 bg-slate-900 rounded-full h-2 overflow-hidden mt-1 border border-blue-500/40">
+              <div 
+                className="bg-gradient-to-r from-blue-600 via-blue-500 to-cyan-400 h-full transition-all duration-300 ease-out shadow-sm shadow-blue-500" 
+                style={{ width: `${enrichmentProgress}%` }}
+              ></div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Visual top dark header */}
       <header className="bg-slate-900 border-b border-slate-800 text-white py-5 px-6 shadow-md">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
