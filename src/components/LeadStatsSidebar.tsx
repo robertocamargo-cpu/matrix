@@ -8,7 +8,7 @@ import { Lead, LeadDiscovery, LeadDecisionMaker, LeadConflict, LeadAIAnalysis, L
 import { 
   TrendingUp, Award, DollarSign, Clock, HelpCircle, 
   CheckCircle2, AlertTriangle, ArrowRight, UserCheck, PhoneCall, FileDown, Layers,
-  Briefcase, AlertCircle, Sparkles
+  Briefcase, AlertCircle, Sparkles, FileText
 } from 'lucide-react';
 import { calculateLuxuryScore } from '../utils/luxury';
 
@@ -22,6 +22,7 @@ interface LeadStatsSidebarProps {
   nextButtonId: string;
   onNextButtonClick: (nextButtonId: string) => void;
   onNavigateToTab: (tabIndex: number) => void;
+  onOpenExecutiveReport?: () => void;
   totalCost: number;
   totalDurationMs: number;
 }
@@ -36,6 +37,7 @@ export const LeadStatsSidebar: React.FC<LeadStatsSidebarProps> = ({
   nextButtonId,
   onNextButtonClick,
   onNavigateToTab,
+  onOpenExecutiveReport,
   totalCost,
   totalDurationMs,
 }) => {
@@ -247,18 +249,29 @@ export const LeadStatsSidebar: React.FC<LeadStatsSidebarProps> = ({
         </h2>
       </div>
 
-      {/* Primary Export CTA */}
-      <button
-        onClick={async () => {
-          const { exportLeadToPDF } = await import('../utils/pdfExport');
-          exportLeadToPDF(lead, discoveries, decisionMakers, history, aiAnalysis, totalCost, totalDurationMs);
-        }}
-        id="btn-export-pdf"
-        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold text-xs rounded-xl shadow-md transition-all border border-indigo-500/20 cursor-pointer active:scale-95"
-      >
-        <FileDown className="h-4 w-4 shrink-0" />
-        Exportar Ficha Consolidada (PDF)
-      </button>
+      {/* Primary Export & View Dossier CTAs */}
+      <div className="space-y-2">
+        <button
+          onClick={() => onOpenExecutiveReport ? onOpenExecutiveReport() : onNavigateToTab(5)}
+          id="btn-view-executive-report"
+          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all border border-amber-400 cursor-pointer active:scale-95"
+        >
+          <FileText className="h-4 w-4 shrink-0 text-slate-950" />
+          Visualizar Relatório Executivo (Tela)
+        </button>
+
+        <button
+          onClick={async () => {
+            const { exportLeadToPDF } = await import('../utils/pdfExport');
+            exportLeadToPDF(lead, discoveries, decisionMakers, history, aiAnalysis, totalCost, totalDurationMs);
+          }}
+          id="btn-export-pdf"
+          className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl shadow-sm transition-all border border-slate-700 cursor-pointer active:scale-95"
+        >
+          <FileDown className="h-4 w-4 shrink-0 text-indigo-400" />
+          Exportar PDF (.pdf)
+        </button>
+      </div>
 
       <hr className="border-slate-800" />
 

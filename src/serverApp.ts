@@ -11,8 +11,14 @@ import dotenv from 'dotenv';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { LRUCache } from 'lru-cache';
+import { getDbPool, query, initializeDatabaseSchema } from './db/neon';
 
 dotenv.config();
+
+// Auto-initialize Neon PostgreSQL Database Schema if connected
+initializeDatabaseSchema().catch(err => {
+  console.log('[Neon DB] Inicialização em background:', err?.message || err);
+});
 
 const app = express();
 const PORT = 3000;
@@ -618,7 +624,7 @@ async function handleRealApolloEnrichment(lead: any, currentDiscoveries: any[], 
       department: "Compras",
       ranking: 1,
       confidence: 95,
-      contacts: [ { email: domain ? `carlos.santos@${domain}` : `carlos.santos@exemplo.com.br` } ],
+      contacts: lead.email ? [ { email: lead.email, phone: lead.telefone || '', isDirectEmail: false } ] : [],
       sources: [`Apollo.io API (Fallback)`],
       runId
     });
@@ -899,7 +905,7 @@ async function handleRealPDLEnrichment(lead: any, currentDiscoveries: any[], sta
       department: "Operações",
       ranking: 1,
       confidence: 95,
-      contacts: [ { email: domain ? `contato@${domain}` : `contato@exemplo.com.br` } ],
+      contacts: lead.email ? [ { email: lead.email, phone: lead.telefone || '', isDirectEmail: false } ] : [],
       sources: [`People Data Labs API (Fallback)`],
       runId
     });
@@ -1322,6 +1328,185 @@ app.post('/api/test-proxy', async (req, res) => {
       error: `Falha ao conectar ao Proxy de Automação: ${err.message || 'Timeout de rede'}. Verifique as credenciais ou host.`,
       latencyMs
     });
+  }
+});
+
+// ==========================================
+// NEON POSTGRESQL DATABASE ENDPOINTS
+// ==========================================
+
+// 1. Status and table stats
+app.get('/api/db/status', async (req, res) => {
+  const pool = getDbPool();
+  if (!pool) {
+    return res.json({
+      connected: false,
+      provider: 'Neon PostgreSQL (Não Conectado)',
+      message: 'Nenhuma variável POSTGRES_URL ou DATABASE_URL encontrada. O sistema está salvando dados localmente.',
+      stats: { leads: 0, decisionMakers: 0, discoveries: 0, runs: 0 }
+    });
+  }
+
+  try {
+    const leadsCount = await query('SELECT COUNT(*) FROM leads');
+    const dmsCount = await query('SELECT COUNT(*) FROM decision_makers');
+    const discCount = await query('SELECT COUNT(*) FROM lead_discoveries');
+    const runsCount = await query('SELECT COUNT(*) FROM enrichment_runs');
+
+    return res.json({
+      connected: true,
+      provider: 'Neon PostgreSQL (Vercel Serverless)',
+      message: 'Banco de dados Neon PostgreSQL conectado e operacional!',
+      stats: {
+        leads: parseInt(leadsCount.rows[0]?.count || '0', 10),
+        decisionMakers: parseInt(dmsCount.rows[0]?.count || '0', 10),
+        discoveries: parseInt(discCount.rows[0]?.count || '0', 10),
+        runs: parseInt(runsCount.rows[0]?.count || '0', 10)
+      }
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      connected: false,
+      error: err.message || 'Erro ao consultar status do banco Neon'
+    });
+  }
+});
+
+// 2. Save / Sync lead and its child entities
+app.post('/api/db/save-lead', async (req, res) => {
+  const pool = getDbPool();
+  if (!pool) {
+    return res.json({
+      success: false,
+      savedLocal: true,
+      message: 'Neon Database não configurado no servidor. Dados mantidos na memória/local.'
+    });
+  }
+
+  try {
+    const { lead, decisionMakers = [], discoveries = [], runs = [] } = req.body;
+    if (!lead || !lead.id) {
+      return res.status(400).json({ error: 'Lead inválido ou sem ID' });
+    }
+
+    // Upsert Lead
+    await query(`
+      INSERT INTO leads (
+        id, razao_social, nome_fantasia, cnpj, site, segmento, setor_atuacao,
+        cnae_principal, situacao_cadastral, capital_social, endereco_oficial,
+        cidade, estado, telefone, email, icp_score, luxury_score, is_luxury_profile,
+        justificativa_ia, risco_ia, raw_data, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, CURRENT_TIMESTAMP)
+      ON CONFLICT (id) DO UPDATE SET
+        razao_social = EXCLUDED.razao_social,
+        nome_fantasia = EXCLUDED.nome_fantasia,
+        cnpj = EXCLUDED.cnpj,
+        site = EXCLUDED.site,
+        segmento = EXCLUDED.segmento,
+        setor_atuacao = EXCLUDED.setor_atuacao,
+        cnae_principal = EXCLUDED.cnae_principal,
+        situacao_cadastral = EXCLUDED.situacao_cadastral,
+        capital_social = EXCLUDED.capital_social,
+        endereco_oficial = EXCLUDED.endereco_oficial,
+        cidade = EXCLUDED.cidade,
+        estado = EXCLUDED.estado,
+        telefone = EXCLUDED.telefone,
+        email = EXCLUDED.email,
+        icp_score = EXCLUDED.icp_score,
+        luxury_score = EXCLUDED.luxury_score,
+        is_luxury_profile = EXCLUDED.is_luxury_profile,
+        justificativa_ia = EXCLUDED.justificativa_ia,
+        risco_ia = EXCLUDED.risco_ia,
+        raw_data = EXCLUDED.raw_data,
+        updated_at = CURRENT_TIMESTAMP;
+    `, [
+      lead.id,
+      lead.razaoSocial || lead.razaoSocialOficial || lead.nomeFantasia || '',
+      lead.nomeFantasia || lead.nomeFantasiaOficial || '',
+      lead.cnpj || lead.cnpjOficial || '',
+      lead.site || lead.siteOficial || '',
+      lead.segmento || '',
+      lead.setorAtuacao || '',
+      lead.cnaePrincipal || '',
+      lead.situacaoOficial || 'ATIVA',
+      lead.capitalSocial || lead.capitalSocialOficial || '',
+      lead.enderecoOficial || '',
+      lead.cidade || '',
+      lead.estado || '',
+      lead.telefone || '',
+      lead.email || '',
+      lead.icpScore || 0,
+      lead.luxuryScore || 0,
+      !!lead.isLuxuryProfile,
+      lead.justificativaIa || '',
+      lead.riscoIa || '',
+      JSON.stringify(lead)
+    ]);
+
+    // Upsert Decision Makers
+    for (const dm of decisionMakers) {
+      if (!dm.id) continue;
+      await query(`
+        INSERT INTO decision_makers (
+          id, lead_id, name, role, department, ranking, confidence,
+          is_nevine_target_role, nevine_category, nevine_key_metric,
+          linkedin_url, linkedin_verified, contacts, sources, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          role = EXCLUDED.role,
+          department = EXCLUDED.department,
+          ranking = EXCLUDED.ranking,
+          confidence = EXCLUDED.confidence,
+          is_nevine_target_role = EXCLUDED.is_nevine_target_role,
+          nevine_category = EXCLUDED.nevine_category,
+          nevine_key_metric = EXCLUDED.nevine_key_metric,
+          linkedin_url = EXCLUDED.linkedin_url,
+          linkedin_verified = EXCLUDED.linkedin_verified,
+          contacts = EXCLUDED.contacts,
+          sources = EXCLUDED.sources,
+          status = EXCLUDED.status;
+      `, [
+        dm.id,
+        lead.id,
+        dm.name,
+        dm.role || '',
+        dm.department || '',
+        dm.ranking || 1,
+        dm.confidence || 90,
+        !!dm.isNevineTargetRole,
+        dm.nevineCategory || '',
+        dm.nevineKeyMetric || '',
+        dm.contacts?.find((c: any) => c.linkedin)?.linkedin || '',
+        !!dm.linkedinVerified,
+        JSON.stringify(dm.contacts || []),
+        JSON.stringify(dm.sources || []),
+        dm.status || 'Encontrado'
+      ]);
+    }
+
+    return res.json({
+      success: true,
+      message: `Lead ${lead.nomeFantasia || lead.razaoSocial} salvo com sucesso no banco Neon PostgreSQL!`
+    });
+  } catch (err: any) {
+    console.error('[Neon DB] Erro ao salvar lead:', err);
+    return res.status(500).json({ error: err.message || 'Erro ao sincronizar com o banco Neon' });
+  }
+});
+
+// 3. Get all leads from database
+app.get('/api/db/leads', async (req, res) => {
+  const pool = getDbPool();
+  if (!pool) {
+    return res.json({ leads: [] });
+  }
+
+  try {
+    const result = await query('SELECT * FROM leads ORDER BY updated_at DESC LIMIT 100');
+    return res.json({ leads: result.rows });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
   }
 });
 

@@ -1,11 +1,135 @@
 // src/serverApp.ts
 import express from "express";
 import { GoogleGenAI } from "@google/genai";
-import dotenv from "dotenv";
+import dotenv2 from "dotenv";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { LRUCache } from "lru-cache";
+
+// src/db/neon.ts
+import { Pool } from "@neondatabase/serverless";
+import dotenv from "dotenv";
 dotenv.config();
+var pool = null;
+function getDbPool() {
+  const connectionString = process.env.POSTGRES_URL || process.env.DATABASE_URL || process.env.POSTGRES_PRISMA_URL || process.env.POSTGRES_URL_NON_POOLING;
+  if (!connectionString || connectionString.trim() === "") {
+    return null;
+  }
+  if (!pool) {
+    try {
+      pool = new Pool({ connectionString: connectionString.trim() });
+    } catch (e) {
+      console.error("[Neon DB] Erro ao inicializar pool de conex\xE3o:", e);
+      pool = null;
+    }
+  }
+  return pool;
+}
+async function query(text, params = []) {
+  const activePool = getDbPool();
+  if (!activePool) {
+    throw new Error("Neon Database n\xE3o configurado. Adicione a vari\xE1vel POSTGRES_URL nas configura\xE7\xF5es da Vercel ou no .env.");
+  }
+  const res = await activePool.query(text, params);
+  return res;
+}
+async function initializeDatabaseSchema() {
+  const activePool = getDbPool();
+  if (!activePool) {
+    console.log("[Neon DB] Nenhuma conex\xE3o PostgreSQL encontrada. Executando em modo local.");
+    return false;
+  }
+  try {
+    console.log("[Neon DB] Verificando e criando tabelas no Neon PostgreSQL...");
+    await activePool.query(`
+      CREATE TABLE IF NOT EXISTS leads (
+        id VARCHAR(100) PRIMARY KEY,
+        razao_social VARCHAR(255),
+        nome_fantasia VARCHAR(255),
+        cnpj VARCHAR(30),
+        site VARCHAR(255),
+        segmento VARCHAR(150),
+        setor_atuacao VARCHAR(150),
+        cnae_principal VARCHAR(50),
+        situacao_cadastral VARCHAR(50),
+        capital_social VARCHAR(50),
+        endereco_oficial TEXT,
+        cidade VARCHAR(100),
+        estado VARCHAR(20),
+        telefone VARCHAR(50),
+        email VARCHAR(255),
+        icp_score INT DEFAULT 0,
+        luxury_score INT DEFAULT 0,
+        is_luxury_profile BOOLEAN DEFAULT false,
+        justificativa_ia TEXT,
+        risco_ia TEXT,
+        raw_data JSONB,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await activePool.query(`
+      CREATE TABLE IF NOT EXISTS decision_makers (
+        id VARCHAR(100) PRIMARY KEY,
+        lead_id VARCHAR(100) REFERENCES leads(id) ON DELETE CASCADE,
+        name VARCHAR(200) NOT NULL,
+        role VARCHAR(200),
+        department VARCHAR(150),
+        ranking INT DEFAULT 1,
+        confidence INT DEFAULT 90,
+        is_nevine_target_role BOOLEAN DEFAULT false,
+        nevine_category VARCHAR(150),
+        nevine_key_metric TEXT,
+        linkedin_url VARCHAR(500),
+        linkedin_verified BOOLEAN DEFAULT false,
+        contacts JSONB,
+        sources JSONB,
+        status VARCHAR(50) DEFAULT 'Encontrado',
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await activePool.query(`
+      CREATE TABLE IF NOT EXISTS lead_discoveries (
+        id VARCHAR(100) PRIMARY KEY,
+        lead_id VARCHAR(100) REFERENCES leads(id) ON DELETE CASCADE,
+        field_name VARCHAR(100),
+        field_label VARCHAR(150),
+        raw_value TEXT,
+        clean_value TEXT,
+        source_name VARCHAR(150),
+        source_url VARCHAR(500),
+        confidence INT DEFAULT 90,
+        status VARCHAR(50) DEFAULT 'Encontrado',
+        author_ia VARCHAR(100),
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await activePool.query(`
+      CREATE TABLE IF NOT EXISTS enrichment_runs (
+        id VARCHAR(100) PRIMARY KEY,
+        lead_id VARCHAR(100) REFERENCES leads(id) ON DELETE CASCADE,
+        button_id VARCHAR(50),
+        button_name VARCHAR(150),
+        duration_ms INT DEFAULT 0,
+        cost_estimated NUMERIC(10, 4) DEFAULT 0.00,
+        api_calls_count INT DEFAULT 1,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log("[Neon DB] Tabelas criadas/verificadas com sucesso no Neon PostgreSQL!");
+    return true;
+  } catch (err) {
+    console.error("[Neon DB] Erro durante a inicializa\xE7\xE3o do schema:", err);
+    return false;
+  }
+}
+
+// src/serverApp.ts
+dotenv2.config();
+initializeDatabaseSchema().catch((err) => {
+  console.log("[Neon DB] Inicializa\xE7\xE3o em background:", err?.message || err);
+});
 var app = express();
 app.use(
   helmet({
@@ -61,7 +185,7 @@ var currentKeyUsed = null;
 var aiClient = null;
 function getGeminiClient() {
   try {
-    dotenv.config({ override: true });
+    dotenv2.config({ override: true });
   } catch (e) {
   }
   let key = customGeminiKey || process.env.GEMINI_API_KEY;
@@ -575,7 +699,7 @@ async function handleRealApolloEnrichment(lead, currentDiscoveries, startTime) {
       department: "Compras",
       ranking: 1,
       confidence: 95,
-      contacts: [{ email: domain2 ? `carlos.santos@${domain2}` : `carlos.santos@exemplo.com.br` }],
+      contacts: lead.email ? [{ email: lead.email, phone: lead.telefone || "", isDirectEmail: false }] : [],
       sources: [`Apollo.io API (Fallback)`],
       runId
     });
@@ -817,7 +941,7 @@ async function handleRealPDLEnrichment(lead, currentDiscoveries, startTime, pdlF
       department: "Opera\xE7\xF5es",
       ranking: 1,
       confidence: 95,
-      contacts: [{ email: domain ? `contato@${domain}` : `contato@exemplo.com.br` }],
+      contacts: lead.email ? [{ email: lead.email, phone: lead.telefone || "", isDirectEmail: false }] : [],
       sources: [`People Data Labs API (Fallback)`],
       runId
     });
@@ -1186,6 +1310,166 @@ app.post("/api/test-proxy", async (req, res) => {
       error: `Falha ao conectar ao Proxy de Automa\xE7\xE3o: ${err.message || "Timeout de rede"}. Verifique as credenciais ou host.`,
       latencyMs
     });
+  }
+});
+app.get("/api/db/status", async (req, res) => {
+  const pool2 = getDbPool();
+  if (!pool2) {
+    return res.json({
+      connected: false,
+      provider: "Neon PostgreSQL (N\xE3o Conectado)",
+      message: "Nenhuma vari\xE1vel POSTGRES_URL ou DATABASE_URL encontrada. O sistema est\xE1 salvando dados localmente.",
+      stats: { leads: 0, decisionMakers: 0, discoveries: 0, runs: 0 }
+    });
+  }
+  try {
+    const leadsCount = await query("SELECT COUNT(*) FROM leads");
+    const dmsCount = await query("SELECT COUNT(*) FROM decision_makers");
+    const discCount = await query("SELECT COUNT(*) FROM lead_discoveries");
+    const runsCount = await query("SELECT COUNT(*) FROM enrichment_runs");
+    return res.json({
+      connected: true,
+      provider: "Neon PostgreSQL (Vercel Serverless)",
+      message: "Banco de dados Neon PostgreSQL conectado e operacional!",
+      stats: {
+        leads: parseInt(leadsCount.rows[0]?.count || "0", 10),
+        decisionMakers: parseInt(dmsCount.rows[0]?.count || "0", 10),
+        discoveries: parseInt(discCount.rows[0]?.count || "0", 10),
+        runs: parseInt(runsCount.rows[0]?.count || "0", 10)
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({
+      connected: false,
+      error: err.message || "Erro ao consultar status do banco Neon"
+    });
+  }
+});
+app.post("/api/db/save-lead", async (req, res) => {
+  const pool2 = getDbPool();
+  if (!pool2) {
+    return res.json({
+      success: false,
+      savedLocal: true,
+      message: "Neon Database n\xE3o configurado no servidor. Dados mantidos na mem\xF3ria/local."
+    });
+  }
+  try {
+    const { lead, decisionMakers = [], discoveries = [], runs = [] } = req.body;
+    if (!lead || !lead.id) {
+      return res.status(400).json({ error: "Lead inv\xE1lido ou sem ID" });
+    }
+    await query(`
+      INSERT INTO leads (
+        id, razao_social, nome_fantasia, cnpj, site, segmento, setor_atuacao,
+        cnae_principal, situacao_cadastral, capital_social, endereco_oficial,
+        cidade, estado, telefone, email, icp_score, luxury_score, is_luxury_profile,
+        justificativa_ia, risco_ia, raw_data, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, CURRENT_TIMESTAMP)
+      ON CONFLICT (id) DO UPDATE SET
+        razao_social = EXCLUDED.razao_social,
+        nome_fantasia = EXCLUDED.nome_fantasia,
+        cnpj = EXCLUDED.cnpj,
+        site = EXCLUDED.site,
+        segmento = EXCLUDED.segmento,
+        setor_atuacao = EXCLUDED.setor_atuacao,
+        cnae_principal = EXCLUDED.cnae_principal,
+        situacao_cadastral = EXCLUDED.situacao_cadastral,
+        capital_social = EXCLUDED.capital_social,
+        endereco_oficial = EXCLUDED.endereco_oficial,
+        cidade = EXCLUDED.cidade,
+        estado = EXCLUDED.estado,
+        telefone = EXCLUDED.telefone,
+        email = EXCLUDED.email,
+        icp_score = EXCLUDED.icp_score,
+        luxury_score = EXCLUDED.luxury_score,
+        is_luxury_profile = EXCLUDED.is_luxury_profile,
+        justificativa_ia = EXCLUDED.justificativa_ia,
+        risco_ia = EXCLUDED.risco_ia,
+        raw_data = EXCLUDED.raw_data,
+        updated_at = CURRENT_TIMESTAMP;
+    `, [
+      lead.id,
+      lead.razaoSocial || lead.razaoSocialOficial || lead.nomeFantasia || "",
+      lead.nomeFantasia || lead.nomeFantasiaOficial || "",
+      lead.cnpj || lead.cnpjOficial || "",
+      lead.site || lead.siteOficial || "",
+      lead.segmento || "",
+      lead.setorAtuacao || "",
+      lead.cnaePrincipal || "",
+      lead.situacaoOficial || "ATIVA",
+      lead.capitalSocial || lead.capitalSocialOficial || "",
+      lead.enderecoOficial || "",
+      lead.cidade || "",
+      lead.estado || "",
+      lead.telefone || "",
+      lead.email || "",
+      lead.icpScore || 0,
+      lead.luxuryScore || 0,
+      !!lead.isLuxuryProfile,
+      lead.justificativaIa || "",
+      lead.riscoIa || "",
+      JSON.stringify(lead)
+    ]);
+    for (const dm of decisionMakers) {
+      if (!dm.id) continue;
+      await query(`
+        INSERT INTO decision_makers (
+          id, lead_id, name, role, department, ranking, confidence,
+          is_nevine_target_role, nevine_category, nevine_key_metric,
+          linkedin_url, linkedin_verified, contacts, sources, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          role = EXCLUDED.role,
+          department = EXCLUDED.department,
+          ranking = EXCLUDED.ranking,
+          confidence = EXCLUDED.confidence,
+          is_nevine_target_role = EXCLUDED.is_nevine_target_role,
+          nevine_category = EXCLUDED.nevine_category,
+          nevine_key_metric = EXCLUDED.nevine_key_metric,
+          linkedin_url = EXCLUDED.linkedin_url,
+          linkedin_verified = EXCLUDED.linkedin_verified,
+          contacts = EXCLUDED.contacts,
+          sources = EXCLUDED.sources,
+          status = EXCLUDED.status;
+      `, [
+        dm.id,
+        lead.id,
+        dm.name,
+        dm.role || "",
+        dm.department || "",
+        dm.ranking || 1,
+        dm.confidence || 90,
+        !!dm.isNevineTargetRole,
+        dm.nevineCategory || "",
+        dm.nevineKeyMetric || "",
+        dm.contacts?.find((c) => c.linkedin)?.linkedin || "",
+        !!dm.linkedinVerified,
+        JSON.stringify(dm.contacts || []),
+        JSON.stringify(dm.sources || []),
+        dm.status || "Encontrado"
+      ]);
+    }
+    return res.json({
+      success: true,
+      message: `Lead ${lead.nomeFantasia || lead.razaoSocial} salvo com sucesso no banco Neon PostgreSQL!`
+    });
+  } catch (err) {
+    console.error("[Neon DB] Erro ao salvar lead:", err);
+    return res.status(500).json({ error: err.message || "Erro ao sincronizar com o banco Neon" });
+  }
+});
+app.get("/api/db/leads", async (req, res) => {
+  const pool2 = getDbPool();
+  if (!pool2) {
+    return res.json({ leads: [] });
+  }
+  try {
+    const result = await query("SELECT * FROM leads ORDER BY updated_at DESC LIMIT 100");
+    return res.json({ leads: result.rows });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 app.get("/api/test-apis", async (req, res) => {
@@ -2828,6 +3112,12 @@ var serverApp_default = app;
 export {
   serverApp_default as default
 };
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ * 
+ * Neon PostgreSQL Serverless Integration & Persistence Engine
+ */
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0

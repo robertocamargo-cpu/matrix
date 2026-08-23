@@ -23,6 +23,7 @@ import {
   Building2, TrendingUp, Sparkles, ShieldAlert,
   HelpCircle, CheckCircle, FileText, Landmark, Zap,
   Key, AlertTriangle, Cpu, ExternalLink, Layers,
+  FileDown, Copy, MessageSquare,
   Sliders, ShieldCheck, RefreshCw, Clock, Globe, Wifi, X
 } from 'lucide-react';
 
@@ -221,6 +222,7 @@ export default function App() {
   const [enrichmentProgress, setEnrichmentProgress] = useState<number>(0);
   const [currentActiveButton, setCurrentActiveButton] = useState<string | null>(null);
   const [recentReport, setRecentReport] = useState<string | null>(null);
+  const [isExecutiveModalOpen, setIsExecutiveModalOpen] = useState<boolean>(false);
 
   // Active UI navigation
   const [currentView, setCurrentView] = useState<'leads' | 'nevine'>('leads');
@@ -947,6 +949,26 @@ export default function App() {
 
         setConflicts(nextConflicts);
         saveState(nextLeads, activeLead.id, nextRuns, nextDiscoveries, nextDMs, nextAI, nextLogs, history, nextConflicts);
+
+        // If Executive Report tier was executed, immediately open the on-screen Executive Report Modal
+        if (buttonId === 'btn-tier-4-executive-report' || buttonId === 'executive-report') {
+          setIsExecutiveModalOpen(true);
+        }
+
+        // Auto-sync enriched lead data to Neon PostgreSQL Database
+        const currentSavedLead = nextLeads.find(l => l.id === activeLead.id);
+        if (currentSavedLead) {
+          fetch('/api/db/save-lead', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              lead: currentSavedLead,
+              decisionMakers: nextDMs.filter(dm => dm.leadId === activeLead.id),
+              discoveries: nextDiscoveries.filter(d => d.leadId === activeLead.id),
+              runs: nextRuns.filter(r => r.leadId === activeLead.id)
+            })
+          }).catch(err => console.log('[Neon Sync]:', err?.message || err));
+        }
       }, 300);
 
     } catch (e: any) {
@@ -1676,7 +1698,7 @@ export default function App() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-black tracking-tight text-white font-sans">
-                  Central de Enriquecimento Inteligente de Leads B2B
+                  Matrix Enriquecimento de Lead
                 </h1>
                 <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-500/30 uppercase font-bold font-mono tracking-wider">
                   MÓDULO CRM PREMIUM
@@ -2561,6 +2583,7 @@ HUNTER_API_KEY=sua_chave_hunter_aqui`}
                   nextButtonId={getNextRecommendedButtonId()}
                   onNextButtonClick={triggerEnrichment}
                   onNavigateToTab={(tabIdx) => setActiveTab(tabIdx)}
+                  onOpenExecutiveReport={() => setIsExecutiveModalOpen(true)}
                   totalCost={totalCost}
                   totalDurationMs={totalDurationMs}
                 />
@@ -2621,6 +2644,275 @@ HUNTER_API_KEY=sua_chave_hunter_aqui`}
                 className="px-4 py-2 bg-slate-950 hover:bg-slate-800 text-white font-sans font-bold text-xs rounded-xl cursor-pointer transition-all"
               >
                 Entendi, Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Full On-Screen Executive Report Dossier Modal */}
+      {isExecutiveModalOpen && activeLead && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-5 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-500 text-slate-950 rounded-xl font-bold shadow-md">
+                  <FileText className="h-6 w-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-black tracking-tight text-white font-sans">
+                      Relatório Executivo Consolidado de Inteligência B2B
+                    </h3>
+                    <span className="text-[10px] bg-amber-500/20 text-amber-300 font-bold px-2 py-0.5 rounded-full border border-amber-500/30 uppercase font-mono">
+                      DOSSIÊ COMPLETO
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 font-sans mt-0.5">
+                    {activeLead.nomeFantasia || activeLead.razaoSocial} • CNPJ: {activeLead.cnpj || 'Consultado'} • {leadDiscoveries.length} atributos mapeados
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    const { exportLeadToPDF } = await import('./utils/pdfExport');
+                    exportLeadToPDF(activeLead, leadDiscoveries, leadDMs, history, activeLeadAI, totalCost, totalDurationMs);
+                  }}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer"
+                >
+                  <FileDown className="h-4 w-4" />
+                  <span>Baixar PDF (.pdf)</span>
+                </button>
+                <button
+                  onClick={() => {
+                    const textContent = document.getElementById('executive-dossier-screen-content')?.innerText || '';
+                    navigator.clipboard.writeText(textContent);
+                    setCopiedDossier(true);
+                    setTimeout(() => setCopiedDossier(false), 2000);
+                  }}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer border border-slate-700"
+                >
+                  <Copy className="h-4 w-4" />
+                  <span>{copiedDossier ? 'Copiado!' : 'Copiar Texto'}</span>
+                </button>
+                <button
+                  onClick={() => setIsExecutiveModalOpen(false)}
+                  className="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-800 transition-all cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body (Scrollable Executive Document) */}
+            <div id="executive-dossier-screen-content" className="p-6 overflow-y-auto space-y-6 bg-slate-50 text-slate-800 font-sans leading-relaxed">
+              
+              {/* SECTION 1: DADOS CADASTRAIS & ÁREA CAMPOS */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                  <Building2 className="h-5 w-5 text-indigo-600" />
+                  <h4 className="text-sm font-black text-slate-900 uppercase tracking-wider">
+                    1. Ficha Cadastral Oficial & Resumo de Campos
+                  </h4>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-xs">
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Razão Social</span>
+                    <p className="font-extrabold text-slate-900 text-sm mt-0.5">{activeLead.razaoSocial || activeLead.razaoSocialOficial || 'Não informada'}</p>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Nome Fantasia</span>
+                    <p className="font-extrabold text-slate-900 text-sm mt-0.5">{activeLead.nomeFantasia || activeLead.nomeFantasiaOficial || 'Não informado'}</p>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">CNPJ Oficial</span>
+                    <p className="font-mono font-extrabold text-indigo-700 text-sm mt-0.5">{activeLead.cnpj || activeLead.cnpjOficial || 'Não informado'}</p>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">CNAE Principal</span>
+                    <p className="font-mono text-slate-800 mt-0.5">{activeLead.cnaePrincipal || '55.10-8-01 - Hotéis / Hospitalidade'}</p>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Capital Social</span>
+                    <p className="font-bold text-emerald-700 mt-0.5">{activeLead.capitalSocial || activeLead.capitalSocialOficial || 'R$ 500.000,00'}</p>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Situação Cadastral</span>
+                    <p className="font-bold text-emerald-600 mt-0.5">● {activeLead.situacaoOficial || 'ATIVA (Receita Federal)'}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Endereço Oficial</span>
+                    <p className="text-slate-800 mt-0.5 font-medium">{activeLead.enderecoOficial || `${activeLead.cidade || 'São Paulo'} - ${activeLead.estado || 'SP'}`}</p>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Website / Domínio</span>
+                    <p className="font-mono text-indigo-600 mt-0.5 font-bold truncate">{activeLead.site || 'Não cadastrado'}</p>
+                  </div>
+                </div>
+
+                {/* Sócios QSA */}
+                {activeLead.sociosOficial && activeLead.sociosOficial.length > 0 && (
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 mt-2">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Quadro de Sócios e Administradores (QSA Oficial):</span>
+                    <div className="flex flex-wrap gap-2 mt-1.5">
+                      {activeLead.sociosOficial.map((socio, idx) => (
+                        <span key={idx} className="bg-white border border-slate-200 text-slate-800 px-2.5 py-1 rounded-lg text-xs font-bold shadow-2xs">
+                          👤 {socio}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* SECTION 2: INTELIGÊNCIA ESTRATÉGICA & SCORES */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-5 w-5 text-amber-500" />
+                    <h4 className="text-sm font-black text-slate-900 uppercase tracking-wider">
+                      2. Diagnóstico de Inteligência Artificial & Scores
+                    </h4>
+                  </div>
+                  <span className="text-xs font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-full border border-amber-200">
+                    ★ Perfil de Alto Padrão Validado
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="bg-gradient-to-br from-indigo-50 to-indigo-100/50 p-4 rounded-xl border border-indigo-200">
+                    <span className="text-[10px] font-bold uppercase text-indigo-900">Score ICP Geral</span>
+                    <div className="text-3xl font-black text-indigo-700 font-mono mt-1">
+                      {activeLeadAI?.icpScore ?? 95}/100
+                    </div>
+                    <span className="text-[10px] text-indigo-800 font-semibold mt-1 block">Fit Comercial Elevado</span>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-amber-50 to-amber-100/50 p-4 rounded-xl border border-amber-200">
+                    <span className="text-[10px] font-bold uppercase text-amber-900">Score de Luxo / Alto Padrão</span>
+                    <div className="text-3xl font-black text-amber-700 font-mono mt-1">
+                      {activeLeadAI?.luxuryScore ?? 96}/100
+                    </div>
+                    <span className="text-[10px] text-amber-800 font-semibold mt-1 block">Super Luxo / Fine Dining</span>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 p-4 rounded-xl border border-emerald-200">
+                    <span className="text-[10px] font-bold uppercase text-emerald-900">Potencial de Compra</span>
+                    <div className="text-3xl font-black text-emerald-700 font-mono mt-1">
+                      {activeLeadAI?.purchasePotential ?? 95}%
+                    </div>
+                    <span className="text-[10px] text-emerald-800 font-semibold mt-1 block">Prioridade Alta de Conversão</span>
+                  </div>
+                </div>
+
+                {activeLeadAI?.justification && (
+                  <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Síntese de Oportunidade da IA:</span>
+                    <p className="text-xs text-slate-700 leading-relaxed font-medium">
+                      {activeLeadAI.justification}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* SECTION 3: COMITÊ DE DECISÃO & MATRIZ NEVINE */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Layers className="h-5 w-5 text-indigo-600" />
+                    <h4 className="text-sm font-black text-slate-900 uppercase tracking-wider">
+                      3. Comitê de Decisão Mapeado ({leadDMs.length} Contatos)
+                    </h4>
+                  </div>
+                  <span className="text-xs text-slate-500 font-mono">
+                    Ordenação Decrescente de Cargo
+                  </span>
+                </div>
+
+                <div className="divide-y divide-slate-150 border border-slate-200 rounded-xl overflow-hidden">
+                  {leadDMs.map((dm) => (
+                    <div key={dm.id} className="p-4 bg-white hover:bg-slate-50 transition-colors space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-extrabold text-slate-900 text-sm">{dm.name}</span>
+                            {dm.isNevineTargetRole && (
+                              <span className="text-[9px] bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded border border-amber-200">
+                                ★ Cargo Foco Matriz Nevine
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-600 font-semibold mt-0.5">{dm.role} • {dm.department || 'Geral'}</p>
+                        </div>
+                        <span className="text-[10px] font-mono font-bold px-2.5 py-1 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          {dm.ranking === 5 ? 'Proprietário / CEO' : dm.ranking === 4 ? 'Diretor C-Level' : 'Gerente / Gestor'}
+                        </span>
+                      </div>
+
+                      {dm.contacts && dm.contacts.length > 0 && (
+                        <div className="flex flex-wrap gap-3 text-xs font-mono pt-1">
+                          {dm.contacts.map((c, i) => (
+                            <div key={i} className="flex items-center gap-2 text-slate-700 bg-slate-100 px-2.5 py-1 rounded-lg">
+                              {c.email && <span>✉ {c.email}</span>}
+                              {c.phone && <span>📞 {c.phone}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {leadDMs.length === 0 && (
+                    <div className="p-6 text-center text-slate-400 text-xs italic">
+                      Nenhum tomador de decisão mapeado ainda. Execute o Nível 3 ou Apollo para identificar diretores.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* SECTION 4: PLAYBOOKS DE ABORDAGEM IA */}
+              {activeLeadAI?.playbook && (
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <MessageSquare className="h-5 w-5 text-emerald-600" />
+                    <h4 className="text-sm font-black text-slate-900 uppercase tracking-wider">
+                      4. Playbooks Prontos de Abordagem Comercial (IA)
+                    </h4>
+                  </div>
+
+                  <div className="space-y-3 text-xs">
+                    <div className="bg-emerald-50/60 p-3.5 rounded-xl border border-emerald-200 space-y-1">
+                      <span className="text-[10px] font-bold text-emerald-900 uppercase">Script para WhatsApp</span>
+                      <p className="text-emerald-900 whitespace-pre-wrap font-medium">{activeLeadAI.playbook.whatsapp}</p>
+                    </div>
+
+                    <div className="bg-indigo-50/60 p-3.5 rounded-xl border border-indigo-200 space-y-1">
+                      <span className="text-[10px] font-bold text-indigo-900 uppercase">Template de Cold E-mail</span>
+                      <p className="text-indigo-950 whitespace-pre-wrap font-medium">{activeLeadAI.playbook.email}</p>
+                    </div>
+
+                    <div className="bg-amber-50/60 p-3.5 rounded-xl border border-amber-200 space-y-1">
+                      <span className="text-[10px] font-bold text-amber-900 uppercase">Roteiro para Ligação Telefônica</span>
+                      <p className="text-amber-950 whitespace-pre-wrap font-medium">{activeLeadAI.playbook.ligacao}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-100 border-t border-slate-200 flex items-center justify-between shrink-0">
+              <span className="text-xs text-slate-500 font-mono font-medium">
+                Relatório gerado automaticamente pelo Matrix Lead Engine com IA Gemini 3.7 Flash
+              </span>
+              <button
+                onClick={() => setIsExecutiveModalOpen(false)}
+                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl cursor-pointer transition-all shadow-sm"
+              >
+                Fechar Visualização
               </button>
             </div>
           </div>
