@@ -422,15 +422,22 @@ function buildResponseSchema(
   const specificSector = lead.setorAtuacao || segment;
 
   const calculateLuxuryProfileScore = () => {
-    const textToAnalyze = `${name} ${segment} ${lead.produtosServicos || lead.produtosOficiais || ''} ${lead.cnaePrincipal || lead.cnaesOficial || ''} ${lead.vagasAbertas || lead.contratacoesOficiais || lead.vagasOficial || ''} ${lead.razaoSocial || ''} ${lead.cidade || ''} ${lead.estado || ''} ${lead.enderecoOficial || lead.capitalSocial || ''}`.toLowerCase();
+    const textToAnalyze = `${name} ${segment} ${specificSector} ${lead.produtosServicos || lead.produtosOficiais || ''} ${lead.cnaePrincipal || lead.cnaesOficial || ''} ${lead.vagasAbertas || lead.contratacoesOficiais || lead.vagasOficial || ''} ${lead.razaoSocial || ''} ${lead.cidade || ''} ${lead.estado || ''} ${lead.enderecoOficial || lead.capitalSocial || ''}`.toLowerCase();
     
-    let score = 0;
-    const matchingFactors: string[] = [];
+    let score = 45; // Baseline floor for B2B leads
+    const matchingFactors: string[] = [
+      'Empresa B2B ativamente qualificada para prospeção (+45 pts)'
+    ];
 
-    // 1. High-ticket keyword density
+    // 1. High-ticket & Vertical keyword density
     const highTicketKeywords = [
       'luxo', 'luxury', 'boutique', 'prime', 'exclusivo', 'exclusive', 'alto padrão', 'alto padrao', 
-      'alta gastronomia', 'fine dining', 'gourmet', 'bistrô', 'bistro', 'cobertura', 'penthouse', 'private jet'
+      'alta gastronomia', 'fine dining', 'gourmet', 'bistrô', 'bistro', 'cobertura', 'penthouse', 'private jet',
+      'hotel', 'hoteis', 'hotéis', 'pousada', 'motel', 'moteis', 'motéis', 'hospital', 'maternidade', 
+      'clinica', 'clínica', 'dermatologia', 'cirurgia', 'restaurante', 'café', 'advocacia', 'advogados', 
+      'banco', 'asset', 'holding', 'wealth', 'investimento', 'corretora', 'gastronomia', 'michelin', 
+      '5 estrelas', 'triple a', 'presidencial', 'suíte', 'suite', 'fasano', 'tangará', 'emiliano', 'rosewood', 
+      'copacabana', 'unique', 'palácio', 'palacio'
     ];
     let kwCount = 0;
     highTicketKeywords.forEach(kw => {
@@ -439,57 +446,55 @@ function buildResponseSchema(
       }
     });
     if (kwCount > 0) {
-      score += Math.min(25, kwCount * 8);
-      matchingFactors.push(`Palavras-chave de alto padrão identificadas no cadastro (${kwCount} termos) (+${Math.min(25, kwCount * 8)} pts)`);
+      const kwBoost = Math.min(30, kwCount * 8);
+      score += kwBoost;
+      matchingFactors.push(`Palavras-chave de alto padrão identificadas (${kwCount} termos) (+${kwBoost} pts)`);
     }
 
     // 2. Elite prime locations
-    const eliteCities = ['são paulo', 'rio de janeiro', 'curitiba', 'porto alegre', 'belo horizonte', 'florid', 'floripa', 'balneario', 'balneário'];
+    const eliteCities = ['são paulo', 'rio de janeiro', 'curitiba', 'porto alegre', 'belo horizonte', 'florid', 'floripa', 'balneario', 'balneário', 'jardins', 'alphaville', 'leblon', 'ipanema', 'itaim', 'faria lima'];
+    let cityFound = false;
     eliteCities.forEach(city => {
-      if (textToAnalyze.includes(city)) {
-        score += 10;
-        matchingFactors.push(`Localização estratégica em hub de alto consumo (${city}) (+10 pts)`);
+      if (!cityFound && textToAnalyze.includes(city)) {
+        cityFound = true;
+        score += 15;
+        matchingFactors.push(`Localização estratégica em hub de alto consumo (${city.toUpperCase()}) (+15 pts)`);
       }
     });
 
     // 3. Segment analysis
-    if (segment.includes("Hotel") || segment.includes("Turismo") || segment.includes("Resort")) {
+    if (textToAnalyze.includes("hotel") || textToAnalyze.includes("resort") || textToAnalyze.includes("motel") || textToAnalyze.includes("pousada")) {
       score += 20;
-      matchingFactors.push('Setor de Hospitalidade Premium / Hotelaria (+20 pts)');
-    } else if (segment.includes("Restaurante") || segment.includes("Gastronomia") || segment.includes("Bistrô")) {
-      score += 15;
-      matchingFactors.push('Setor de Restaurantes de Luxo / Fine Dining (+15 pts)');
+      matchingFactors.push('Setor de Hospitalidade Premium / Hotelaria / Motéis (+20 pts)');
+    } else if (textToAnalyze.includes("restaurante") || textToAnalyze.includes("gastronomia") || textToAnalyze.includes("bistrô") || textToAnalyze.includes("michelin")) {
+      score += 20;
+      matchingFactors.push('Setor de Restaurantes de Luxo / Fine Dining (+20 pts)');
+    } else if (textToAnalyze.includes("hospital") || textToAnalyze.includes("clínica") || textToAnalyze.includes("clinica") || textToAnalyze.includes("spa")) {
+      score += 20;
+      matchingFactors.push('Setor de Saúde VIP, Clínicas de Elite e SPAs (+20 pts)');
+    } else if (textToAnalyze.includes("advocacia") || textToAnalyze.includes("banco") || textToAnalyze.includes("investimento") || textToAnalyze.includes("holding")) {
+      score += 20;
+      matchingFactors.push('Setor Corporativo Sênior / Advocacia / Financeiro (+20 pts)');
     }
 
-    // 4. Headcount/Employee volume proxy
-    const headCountMatch = textToAnalyze.match(/(\d+)\s*colaboradores/i);
-    if (headCountMatch) {
-      const count = parseInt(headCountMatch[1], 10);
-      if (count > 100) {
-        score += 15;
-        matchingFactors.push(`Volume corporativo expressivo (${count} funcionários) (+15 pts)`);
-      }
-    }
-
-    // 5. Capital Social
+    // 4. Capital Social
     const rawCapital = (lead.capitalSocial || '').replace(/\D/g, '');
     if (rawCapital) {
       const capVal = parseInt(rawCapital, 10);
       if (capVal >= 2000000) {
-        score += 25;
-        matchingFactors.push('Capital Social de Grande Porte (> R$ 2M) (+25 pts)');
-      } else if (capVal >= 500000) {
-        score += 15;
-        matchingFactors.push('Capital Social de Médio-Alto Porte (R$ 500k a R$ 2M) (+15 pts)');
-      } else if (capVal >= 100000) {
-        score += 8;
-        matchingFactors.push('Capital Social Inicial Promissor (+8 pts)');
+        score += 20;
+        matchingFactors.push('Capital Social de Grande Porte (> R$ 2M) (+20 pts)');
+      } else if (capVal >= 250000) {
+        score += 10;
+        matchingFactors.push('Capital Social Promissor (>= R$ 250k) (+10 pts)');
       }
     }
 
+    const finalScore = Math.min(100, Math.max(0, score));
+
     return {
-      score,
-      isPremium: score >= 35,
+      score: finalScore,
+      isPremium: finalScore >= 50,
       matchingFactors
     };
   };
