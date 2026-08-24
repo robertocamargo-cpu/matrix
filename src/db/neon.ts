@@ -91,6 +91,7 @@ export async function initializeDatabaseSchema() {
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE INDEX IF NOT EXISTS idx_leads_updated_at ON leads(updated_at DESC);
     `);
 
     // 2. Decision Makers table
@@ -111,8 +112,11 @@ export async function initializeDatabaseSchema() {
         contacts JSONB,
         sources JSONB,
         status VARCHAR(50) DEFAULT 'Encontrado',
+        run_id VARCHAR(100),
+        raw_data JSONB,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE INDEX IF NOT EXISTS idx_dm_lead_id ON decision_makers(lead_id);
     `);
 
     // 3. Discoveries table
@@ -127,10 +131,19 @@ export async function initializeDatabaseSchema() {
         source_name VARCHAR(150),
         source_url VARCHAR(500),
         confidence INT DEFAULT 90,
+        importance VARCHAR(50),
+        utility VARCHAR(50),
+        evidence TEXT,
         status VARCHAR(50) DEFAULT 'Encontrado',
         author_ia VARCHAR(100),
+        date VARCHAR(50),
+        time VARCHAR(50),
+        run_id VARCHAR(100),
+        button_id VARCHAR(100),
+        raw_json TEXT,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE INDEX IF NOT EXISTS idx_disc_lead_id ON lead_discoveries(lead_id);
     `);
 
     // 4. Enrichment Runs table
@@ -138,16 +151,71 @@ export async function initializeDatabaseSchema() {
       CREATE TABLE IF NOT EXISTS enrichment_runs (
         id VARCHAR(100) PRIMARY KEY,
         lead_id VARCHAR(100) REFERENCES leads(id) ON DELETE CASCADE,
-        button_id VARCHAR(50),
+        button_id VARCHAR(100),
         button_name VARCHAR(150),
+        date VARCHAR(50),
+        time VARCHAR(50),
         duration_ms INT DEFAULT 0,
         cost_estimated NUMERIC(10, 4) DEFAULT 0.00,
         api_calls_count INT DEFAULT 1,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE INDEX IF NOT EXISTS idx_runs_lead_id ON enrichment_runs(lead_id);
     `);
 
-    console.log("[Neon DB] Tabelas criadas/verificadas com sucesso no Neon PostgreSQL!");
+    // 5. AI Analyses table
+    await activePool.query(`
+      CREATE TABLE IF NOT EXISTS lead_ai_analyses (
+        id VARCHAR(100) PRIMARY KEY,
+        lead_id VARCHAR(100) UNIQUE REFERENCES leads(id) ON DELETE CASCADE,
+        icp_score INT DEFAULT 0,
+        purchase_potential INT DEFAULT 0,
+        luxury_profile BOOLEAN DEFAULT false,
+        luxury_score INT DEFAULT 0,
+        luxury_factors JSONB,
+        priority VARCHAR(50) DEFAULT 'Média',
+        justification TEXT,
+        risk TEXT,
+        playbook JSONB,
+        api_dossier TEXT,
+        date VARCHAR(50),
+        time VARCHAR(50),
+        raw_data JSONB,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_ai_lead_id ON lead_ai_analyses(lead_id);
+    `);
+
+    // 6. Lead History & Conflicts table
+    await activePool.query(`
+      CREATE TABLE IF NOT EXISTS lead_history (
+        id VARCHAR(100) PRIMARY KEY,
+        lead_id VARCHAR(100) REFERENCES leads(id) ON DELETE CASCADE,
+        field VARCHAR(100),
+        field_label VARCHAR(150),
+        old_value TEXT,
+        new_value TEXT,
+        date VARCHAR(50),
+        time VARCHAR(50),
+        user_name VARCHAR(100),
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS lead_conflicts (
+        id VARCHAR(100) PRIMARY KEY,
+        lead_id VARCHAR(100) REFERENCES leads(id) ON DELETE CASCADE,
+        field VARCHAR(100),
+        field_label VARCHAR(150),
+        current_value TEXT,
+        value_a TEXT,
+        source_a VARCHAR(150),
+        value_b TEXT,
+        source_b VARCHAR(150),
+        status VARCHAR(50) DEFAULT 'Pendente',
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    console.log("[Neon DB] Todas as tabelas criadas/verificadas com sucesso no Neon PostgreSQL!");
     return true;
   } catch (err) {
     console.error("[Neon DB] Erro durante a inicialização do schema:", err);

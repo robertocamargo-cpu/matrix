@@ -1,5 +1,7 @@
 // src/serverApp.ts
 import express from "express";
+import path from "path";
+import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
 import dotenv2 from "dotenv";
 import helmet from "helmet";
@@ -68,6 +70,7 @@ async function initializeDatabaseSchema() {
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE INDEX IF NOT EXISTS idx_leads_updated_at ON leads(updated_at DESC);
     `);
     await activePool.query(`
       CREATE TABLE IF NOT EXISTS decision_makers (
@@ -86,8 +89,11 @@ async function initializeDatabaseSchema() {
         contacts JSONB,
         sources JSONB,
         status VARCHAR(50) DEFAULT 'Encontrado',
+        run_id VARCHAR(100),
+        raw_data JSONB,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE INDEX IF NOT EXISTS idx_dm_lead_id ON decision_makers(lead_id);
     `);
     await activePool.query(`
       CREATE TABLE IF NOT EXISTS lead_discoveries (
@@ -100,24 +106,84 @@ async function initializeDatabaseSchema() {
         source_name VARCHAR(150),
         source_url VARCHAR(500),
         confidence INT DEFAULT 90,
+        importance VARCHAR(50),
+        utility VARCHAR(50),
+        evidence TEXT,
         status VARCHAR(50) DEFAULT 'Encontrado',
         author_ia VARCHAR(100),
+        date VARCHAR(50),
+        time VARCHAR(50),
+        run_id VARCHAR(100),
+        button_id VARCHAR(100),
+        raw_json TEXT,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE INDEX IF NOT EXISTS idx_disc_lead_id ON lead_discoveries(lead_id);
     `);
     await activePool.query(`
       CREATE TABLE IF NOT EXISTS enrichment_runs (
         id VARCHAR(100) PRIMARY KEY,
         lead_id VARCHAR(100) REFERENCES leads(id) ON DELETE CASCADE,
-        button_id VARCHAR(50),
+        button_id VARCHAR(100),
         button_name VARCHAR(150),
+        date VARCHAR(50),
+        time VARCHAR(50),
         duration_ms INT DEFAULT 0,
         cost_estimated NUMERIC(10, 4) DEFAULT 0.00,
         api_calls_count INT DEFAULT 1,
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE INDEX IF NOT EXISTS idx_runs_lead_id ON enrichment_runs(lead_id);
     `);
-    console.log("[Neon DB] Tabelas criadas/verificadas com sucesso no Neon PostgreSQL!");
+    await activePool.query(`
+      CREATE TABLE IF NOT EXISTS lead_ai_analyses (
+        id VARCHAR(100) PRIMARY KEY,
+        lead_id VARCHAR(100) UNIQUE REFERENCES leads(id) ON DELETE CASCADE,
+        icp_score INT DEFAULT 0,
+        purchase_potential INT DEFAULT 0,
+        luxury_profile BOOLEAN DEFAULT false,
+        luxury_score INT DEFAULT 0,
+        luxury_factors JSONB,
+        priority VARCHAR(50) DEFAULT 'M\xE9dia',
+        justification TEXT,
+        risk TEXT,
+        playbook JSONB,
+        api_dossier TEXT,
+        date VARCHAR(50),
+        time VARCHAR(50),
+        raw_data JSONB,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_ai_lead_id ON lead_ai_analyses(lead_id);
+    `);
+    await activePool.query(`
+      CREATE TABLE IF NOT EXISTS lead_history (
+        id VARCHAR(100) PRIMARY KEY,
+        lead_id VARCHAR(100) REFERENCES leads(id) ON DELETE CASCADE,
+        field VARCHAR(100),
+        field_label VARCHAR(150),
+        old_value TEXT,
+        new_value TEXT,
+        date VARCHAR(50),
+        time VARCHAR(50),
+        user_name VARCHAR(100),
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS lead_conflicts (
+        id VARCHAR(100) PRIMARY KEY,
+        lead_id VARCHAR(100) REFERENCES leads(id) ON DELETE CASCADE,
+        field VARCHAR(100),
+        field_label VARCHAR(150),
+        current_value TEXT,
+        value_a TEXT,
+        source_a VARCHAR(150),
+        value_b TEXT,
+        source_b VARCHAR(150),
+        status VARCHAR(50) DEFAULT 'Pendente',
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log("[Neon DB] Todas as tabelas criadas/verificadas com sucesso no Neon PostgreSQL!");
     return true;
   } catch (err) {
     console.error("[Neon DB] Erro durante a inicializa\xE7\xE3o do schema:", err);
@@ -473,6 +539,167 @@ function detectDepartment(role) {
   if (r.includes("diretor") || r.includes("ceo") || r.includes("proprietar") || r.includes("propriet\xE1r") || r.includes("owner") || r.includes("partner") || r.includes("socio") || r.includes("s\xF3cio") || r.includes("founder") || r.includes("fundador")) return "Diretoria";
   return "Geral";
 }
+function getDossiePromptTemplate() {
+  try {
+    const candidates = [
+      path.join(process.cwd(), "dossie.md"),
+      path.join(__dirname, "../dossie.md"),
+      path.join(__dirname, "dossie.md")
+    ];
+    for (const c of candidates) {
+      if (fs.existsSync(c)) {
+        return fs.readFileSync(c, "utf-8");
+      }
+    }
+  } catch (e) {
+  }
+  return "";
+}
+function generateDeterministicDossie(lead, decisionMakers = [], discoveries = []) {
+  const name = lead.nomeFantasia || lead.razaoSocial || "Empresa";
+  const segment = lead.segmento || "B2B / Corporativo";
+  const specificSector = (lead.setorAtuacao || segment).toLowerCase();
+  const city = lead.cidade || "S\xE3o Paulo";
+  const state = lead.estado || "SP";
+  const contactName = lead.nomeContato || decisionMakers[0]?.name || "Gestor de Compras / Opera\xE7\xF5es";
+  const contactRole = decisionMakers[0]?.role || "Diretoria / Facilities";
+  const isHotel = specificSector.includes("hotel") || specificSector.includes("resort") || specificSector.includes("pousada") || specificSector.includes("motel") || specificSector.includes("hosped");
+  const isRest = specificSector.includes("restaurante") || specificSector.includes("gastronom") || specificSector.includes("bistr") || specificSector.includes("caf\xE9") || specificSector.includes("bar");
+  const isClinica = specificSector.includes("sa\xFAde") || specificSector.includes("saude") || specificSector.includes("clinic") || specificSector.includes("m\xE9dic") || specificSector.includes("hospital") || specificSector.includes("estetic");
+  let produtosProvaveis = "";
+  let solucaoAtual = "";
+  let oportunidade = "";
+  let potencial = "A (Grande Potencial Comercial)";
+  let motivoAbordagem = "";
+  let scriptAbordagem = "";
+  let palavrasChave = "";
+  if (isHotel) {
+    produtosProvaveis = `- Tampas protetoras Cap-Copo para ta\xE7as e copos nas su\xEDtes e room service (evita condensa\xE7\xE3o e poeira)
+- Toalhas de lavabo interfolhadas de alta gramatura com toque de tecido
+- Guardanapos personalizados em alto relevo seco para a \xE1rea de A&B / caf\xE9 da manh\xE3`;
+    solucaoAtual = `Provavelmente utiliza copos e ta\xE7as expostos sem prote\xE7\xE3o nas su\xEDtes ou cobertos com pl\xE1stico filme improvisado; toalhas de papel interfolha simples nos banheiros sociais.`;
+    oportunidade = `Higiene vis\xEDvel no quarto de hotel (h\xF3spede percebe o cuidado com a borda da ta\xE7a) + substitui\xE7\xE3o de filme pl\xE1stico por solu\xE7\xE3o de papel estruturado elegante com a marca do hotel.`;
+    potencial = "A (Grande Potencial \u2014 consumo recorrente elevado em hospitalidade)";
+    palavrasChave = `Hospitalidade, experi\xEAncia do h\xF3spede, higiene impec\xE1vel, conforto, sofistica\xE7\xE3o e sustentabilidade.`;
+    motivoAbordagem = `Hotel de alto padr\xE3o com opera\xE7\xE3o ativa de su\xEDtes e restaurante que preza pela experi\xEAncia do h\xF3spede; a tampa para ta\xE7a e o guardanapo em relevo elevam a percep\xE7\xE3o de assepsia e luxo imediatamente.`;
+    scriptAbordagem = `Ol\xE1 ${contactName}, tudo bem? Sou da Nevine B2B. Acompanhamos a atua\xE7\xE3o impec\xE1vel da marca ${name} na hotelaria. Notamos o cuidado com a experi\xEAncia do h\xF3spede nas su\xEDtes e restaurante. Desenvolvemos tampas protetoras de ta\xE7as e copos em papel encorpado com relevo seco, que substituem o pl\xE1stico filme e deixam o cuidado com a higiene vis\xEDvel para o cliente. Gostaria de enviar um kit de amostras f\xEDsicas sem custo para sua governan\xE7a/compras conhecer?`;
+  } else if (isRest) {
+    produtosProvaveis = `- Guardanapos personalizados em Alto Relevo Seco (Master Trevo Folha Dupla com toque de tecido)
+- Descansos de copos absorventes em alto padr\xE3o (Posicopos)
+- Protetores de talheres personalizados`;
+    solucaoAtual = `Uso de guardanapos de tecido (alto custo com lavanderia e perda) ou guardanapos descart\xE1veis gen\xE9ricos sem relevo/marca na mesa.`;
+    oportunidade = `Substitui\xE7\xE3o inteligente do tecido com higiene est\xE9ril de 1\xBA uso + assinatura de branding com logotipo prensado em relevo seco de alto padr\xE3o na mesa posta.`;
+    potencial = "A (Excelente giro de consumo mensal por cliente/mesa)";
+    palavrasChave = `Alta gastronomia, fine dining, mesa posta, experi\xEAncia sensorial, toque de tecido, cuidado no atendimento.`;
+    motivoAbordagem = `Restaurante/Espa\xE7o gastron\xF4mico com p\xFAblico exigente; o guardanapo em relevo seco transmite requinte superior sem depender de lavanderia externa.`;
+    scriptAbordagem = `Ol\xE1 ${contactName}, tudo bem? Sou da Nevine. Acompanho o trabalho impec\xE1vel e a gastronomia do ${name}. Desenvolvemos guardanapos de folha dupla em alto relevo seco que entregam a maciez do tecido com a seguran\xE7a e praticidade do descarte individual, estampando a marca em relevo. Gostaria de despachar um estojo de mostru\xE1rio f\xEDsico para o time de A&B analisar a textura e gramatura?`;
+  } else if (isClinica) {
+    produtosProvaveis = `- Toalhas de Lavabo Interfolhadas de Alta Gramatura em Relevo Seco
+- Suportes Organizadores em Acr\xEDlico Maci\xE7o Nevine para bancadas de lavabo
+- Guardanapos de coquetel para \xE1rea de caf\xE9/espera VIP`;
+    solucaoAtual = `Papel toalha simples de distribuidor comum ou secador de ar el\xE9trico (ruidoso e dispersor de part\xEDculas).`;
+    oportunidade = `Assepsia cl\xEDnica rigorosa com toque acolhedor de luxo no lavabo e consult\xF3rio.`;
+    potencial = "B (Excelente fideliza\xE7\xE3o e consumo recorrente institucional)";
+    palavrasChave = `Cuidado, bem-estar, assepsia m\xE9dica, requinte, acolhimento, atendimento humanizado.`;
+    motivoAbordagem = `Cl\xEDnica/Espa\xE7o de sa\xFAde que cobra ticket de alto valor e precisa manter a percep\xE7\xE3o de excel\xEAncia at\xE9 os m\xEDnimos detalhes do lavabo.`;
+    scriptAbordagem = `Ol\xE1 ${contactName}, tudo bem? Sou da Nevine. Notamos o padr\xE3o de excel\xEAncia no atendimento da ${name}. Fornecemos toalhas de papel interfolhadas de toque de linho personalizadas em relevo com suporte em acr\xEDlico, garantindo a assepsia total exigida na sa\xFAde com o requinte que seu paciente merece. Posso enviar um kit para a administra\xE7\xE3o conhecer?`;
+  } else {
+    produtosProvaveis = `- Descansos de copos e x\xEDcaras personalizados (Posicopos) para salas de reuni\xE3o
+- Tampas protetoras de jarras e copos executivos
+- Toalhas de lavabo personalizadas para a sede corporativa`;
+    solucaoAtual = `Porta-copos gen\xE9ricos de borracha/madeira (dif\xEDceis de higienizar) ou copos desprotegidos nas mesas de reuni\xE3o.`;
+    oportunidade = `Eliminar condensa\xE7\xE3o em mesas de madeira e demonstrar autoridade de marca em reuni\xF5es de diretoria e assinaturas de contrato.`;
+    potencial = "B (Bom potencial para compras recorrentes corporativas)";
+    palavrasChave = `Autoridade, governan\xE7a, discri\xE7\xE3o, eleg\xE2ncia corporativa, detalhes que importam.`;
+    motivoAbordagem = `Empresa corporativa com forte presen\xE7a de reuni\xF5es executivas e diretoria; descart\xE1veis de luxo protegem o mobili\xE1rio e refor\xE7am a marca.`;
+    scriptAbordagem = `Ol\xE1 ${contactName}, tudo bem? Sou da equipe comercial da Nevine B2B. Acompanhamos a relev\xE2ncia da ${name}. Desenvolvemos protetores de copos e descansos de x\xEDcaras personalizados em alto relevo seco para salas de reuni\xE3o e diretoria. Gostaria de enviar um kit corporativo de cortesia para a equipe de facilities/compras?`;
+  }
+  return `======================================================
+\u{1F4CB} DOSSI\xCA PR\xC9-ABORDAGEM COMERCIAL | NEVINE INTEL
+======================================================
+
+1. \u{1F3E2} QUEM \xC9 ESSE POTENCIAL CLIENTE
+- Raz\xE3o Social: ${lead.razaoSocial || name}
+- Nome Fantasia: ${name}
+- Segmento & Setor: ${segment} | ${lead.setorAtuacao || segment}
+- Porte & Unidades: ${lead.porteOficial || "Porte M\xE9dio/Grande"} (${lead.filiaisOficiais?.length || 1} unidade(s) mapeada(s))
+- Localiza\xE7\xE3o: ${city} / ${state}
+- Posicionamento de Mercado: ${lead.isLuxuryProfile ? "Premium / Alto Padr\xE3o (Foco Nevine)" : "Intermedi\xE1rio / Qualificado"}
+- Estrutura Mapeada: ${lead.estruturaOficial || lead.produtosServicos || "Opera\xE7\xE3o ativa com foco em qualidade e atendimento de clientes exigentes"}
+
+2. \u{1F4E6} PRODUTOS NEVINE MAIS ADERENTES (FOCO PRECISO)
+${produtosProvaveis}
+
+3. \u{1F50D} O QUE ELE PROVAVELMENTE UTILIZA HOJE (CEN\xC1RIO ATUAL)
+${solucaoAtual}
+
+4. \u{1F4A1} QUAL PROBLEMA OU OPORTUNIDADE A NEVINE RESOLVE AQUI
+${oportunidade}
+
+5. \u{1F48E} POTENCIAL COMERCIAL & CLASSIFICA\xC7\xC3O
+- Classifica\xE7\xE3o: ${potencial}
+- Volume Estimado: Recorr\xEAncia cont\xEDnua com alto fit para os lotes e tiragens customizadas da Nevine.
+
+6. \u{1F465} QUEM ABORDAR (DECISORES MAPEADOS)
+- Contato Principal: ${contactName} (${contactRole})
+- Canais Dispon\xEDveis: ${lead.telefone ? `Tel: ${lead.telefone}` : ""} ${lead.whatsapp ? `| WhatsApp: ${lead.whatsapp}` : ""} ${lead.email ? `| E-mail: ${lead.email}` : ""}
+${decisionMakers.length > 0 ? decisionMakers.slice(0, 3).map((dm) => `  \u2514\u2500 ${dm.name} - ${dm.role} (${dm.department || "Geral"})`).join("\n") : "  \u2514\u2500 Recomendado contatar Governan\xE7a / A&B ou Gerente de Compras"}
+
+7. \u{1F5E3}\uFE0F COMO O CLIENTE SE POSICIONA (LINGUAGEM DA MARCA)
+- Palavras-chave: ${palavrasChave}
+- Gancho de Conex\xE3o: Alinhar o discurso da Nevine com a busca do cliente por excel\xEAncia nos detalhes e seguran\xE7a higi\xEAnica.
+
+8. \u{1F680} GATILHOS & SINAIS DE OPORTUNIDADE AGORA
+- Gatilhos: ${lead.vagasAbertas ? `Contrata\xE7\xF5es ativas mapeadas (${lead.vagasAbertas})` : "Opera\xE7\xE3o consolidada em busca de moderniza\xE7\xE3o e efici\xEAncia de suprimentos"}.
+
+======================================================
+\u2B50 A PERGUNTA DE OURO DO VENDEDOR
+"Por que esse cliente deveria falar com a Nevine agora?"
+\u{1F449} "${motivoAbordagem}"
+======================================================
+
+\u{1F4AC} SCRIPT DE ABORDAGEM SUGERIDO (PRONTO PARA DISPARO)
+Canal Recomendado: WhatsApp / LinkedIn Executivo
+"${scriptAbordagem}"
+`;
+}
+async function generateDossiePreAbordagem(lead, decisionMakers = [], discoveries = []) {
+  const ai = getGeminiClient();
+  if (ai) {
+    try {
+      const template = getDossiePromptTemplate();
+      const prompt = `Voc\xEA \xE9 o Especialista S\xEAnior em Intelig\xEAncia Comercial B2B da Nevine.
+Analise os dados cadastrais e descobertas do lead e gere um DOSSI\xCA PR\xC9-ABORDAGEM COMERCIAL estruturado em formato texto conforme as instru\xE7\xF5es oficiais da Nevine:
+
+${template ? "DIRETRIZES DO DOSSI\xCA:\n" + template : ""}
+
+DADOS DO LEAD:
+- Nome/Fantasia: ${lead.nomeFantasia || lead.razaoSocial}
+- Raz\xE3o Social: ${lead.razaoSocial || ""}
+- CNPJ: ${lead.cnpj || ""}
+- Site: ${lead.site || ""}
+- Segmento: ${lead.segmento || ""} | Setor: ${lead.setorAtuacao || ""}
+- Cidade/UF: ${lead.cidade || ""} / ${lead.estado || ""}
+- Capital Social / Porte: ${lead.capitalSocial || ""}
+- Produtos / Servi\xE7os / Estrutura: ${lead.produtosServicos || lead.produtosOficiais || ""}
+- Decisores Mapeados: ${decisionMakers.map((dm) => `${dm.name} (${dm.role} - ${dm.department})`).join(", ") || "Nenhum"}
+- Descobertas: ${discoveries.slice(0, 10).map((d) => `${d.fieldLabel || d.field}: ${d.cleanValue}`).join("; ") || "Cadastro inicial"}
+
+Responda em formato de texto limpo, direto e profissional para o vendedor ler antes da abordagem.`;
+      const resp = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt
+      });
+      const text = resp.text?.trim();
+      if (text && text.length > 100) {
+        return text;
+      }
+    } catch (err) {
+      console.warn("[Gemini Dossie Pre-Abordagem]: Usando gerador determin\xEDstico inteligente de fallback.", err);
+    }
+  }
+  return generateDeterministicDossie(lead, decisionMakers, discoveries);
+}
 function buildResponseSchema(lead, runId, startTime, logs, sources, newDiscoveries, decisionMakers) {
   const name = lead.nomeFantasia || lead.razaoSocial || "Empresa";
   const segment = lead.segmento || "Ind\xFAstria / Servi\xE7os";
@@ -623,7 +850,8 @@ function buildResponseSchema(lead, runId, startTime, logs, sources, newDiscoveri
       priority: icpScore > 85 ? "Alta" : "M\xE9dia",
       justification: `Empresa demonstra excelente perfil de qualifica\xE7\xE3o comercial (Score de Alto Padr\xE3o: ${luxuryEval.score}/100) no segmento de ${specificSector}. Destaques mapeados: ${luxuryEval.matchingFactors.join("; ")}.`,
       risk: `Risco extremamente baixo. O relacionamento principal \xE9 guiado de forma segura e estrat\xE9gica baseada nas premissas de atua\xE7\xE3o da Nevine.`,
-      playbook: getNevinePlaybook(lead, segment, specificSector)
+      playbook: getNevinePlaybook(lead, segment, specificSector),
+      dossieTexto: generateDeterministicDossie(lead, decisionMakers, newDiscoveries)
     }
   };
 }
@@ -1312,6 +1540,24 @@ app.post("/api/test-proxy", async (req, res) => {
     });
   }
 });
+app.post("/api/generate-dossie", async (req, res) => {
+  try {
+    const { lead, decisionMakers = [], discoveries = [] } = req.body;
+    if (!lead) {
+      return res.status(400).json({ error: "Lead n\xE3o fornecido" });
+    }
+    const dossieTexto = await generateDossiePreAbordagem(lead, decisionMakers, discoveries);
+    return res.json({
+      success: true,
+      dossieTexto,
+      date: (/* @__PURE__ */ new Date()).toLocaleDateString("pt-BR"),
+      time: (/* @__PURE__ */ new Date()).toLocaleTimeString("pt-BR")
+    });
+  } catch (err) {
+    console.error("[Generate Dossie Error]:", err);
+    return res.status(500).json({ error: err.message || "Erro ao gerar dossi\xEA comercial" });
+  }
+});
 app.get("/api/db/status", async (req, res) => {
   const pool2 = getDbPool();
   if (!pool2) {
@@ -1319,7 +1565,7 @@ app.get("/api/db/status", async (req, res) => {
       connected: false,
       provider: "Neon PostgreSQL (N\xE3o Conectado)",
       message: "Nenhuma vari\xE1vel POSTGRES_URL ou DATABASE_URL encontrada. O sistema est\xE1 salvando dados localmente.",
-      stats: { leads: 0, decisionMakers: 0, discoveries: 0, runs: 0 }
+      stats: { leads: 0, decisionMakers: 0, discoveries: 0, runs: 0, aiAnalyses: 0 }
     });
   }
   try {
@@ -1327,6 +1573,7 @@ app.get("/api/db/status", async (req, res) => {
     const dmsCount = await query("SELECT COUNT(*) FROM decision_makers");
     const discCount = await query("SELECT COUNT(*) FROM lead_discoveries");
     const runsCount = await query("SELECT COUNT(*) FROM enrichment_runs");
+    const aiCount = await query("SELECT COUNT(*) FROM lead_ai_analyses");
     return res.json({
       connected: true,
       provider: "Neon PostgreSQL (Vercel Serverless)",
@@ -1335,7 +1582,8 @@ app.get("/api/db/status", async (req, res) => {
         leads: parseInt(leadsCount.rows[0]?.count || "0", 10),
         decisionMakers: parseInt(dmsCount.rows[0]?.count || "0", 10),
         discoveries: parseInt(discCount.rows[0]?.count || "0", 10),
-        runs: parseInt(runsCount.rows[0]?.count || "0", 10)
+        runs: parseInt(runsCount.rows[0]?.count || "0", 10),
+        aiAnalyses: parseInt(aiCount.rows[0]?.count || "0", 10)
       }
     });
   } catch (err) {
@@ -1343,6 +1591,200 @@ app.get("/api/db/status", async (req, res) => {
       connected: false,
       error: err.message || "Erro ao consultar status do banco Neon"
     });
+  }
+});
+app.get("/api/db/full-store", async (req, res) => {
+  const pool2 = getDbPool();
+  if (!pool2) {
+    return res.json({
+      connected: false,
+      leads: [],
+      decisionMakers: [],
+      discoveries: [],
+      runs: [],
+      aiAnalysis: {},
+      history: [],
+      conflicts: []
+    });
+  }
+  try {
+    const [leadsRes, dmsRes, discRes, runsRes, aiRes, histRes, confRes] = await Promise.all([
+      query("SELECT * FROM leads ORDER BY updated_at DESC"),
+      query("SELECT * FROM decision_makers ORDER BY ranking ASC, created_at ASC"),
+      query("SELECT * FROM lead_discoveries ORDER BY created_at DESC"),
+      query("SELECT * FROM enrichment_runs ORDER BY created_at DESC"),
+      query("SELECT * FROM lead_ai_analyses"),
+      query("SELECT * FROM lead_history ORDER BY created_at DESC LIMIT 200"),
+      query("SELECT * FROM lead_conflicts ORDER BY created_at DESC LIMIT 100")
+    ]);
+    const leads = leadsRes.rows.map((row) => {
+      if (row.raw_data && typeof row.raw_data === "object") {
+        return {
+          ...row.raw_data,
+          id: row.id,
+          razaoSocial: row.raw_data.razaoSocial || row.razao_social || "",
+          nomeFantasia: row.raw_data.nomeFantasia || row.nome_fantasia || "",
+          cnpj: row.raw_data.cnpj || row.cnpj || "",
+          site: row.raw_data.site || row.site || "",
+          segmento: row.raw_data.segmento || row.segmento || "",
+          setorAtuacao: row.raw_data.setorAtuacao || row.setor_atuacao || "",
+          cnaePrincipal: row.raw_data.cnaePrincipal || row.cnae_principal || "",
+          capitalSocial: row.raw_data.capitalSocial || row.capital_social || "",
+          enderecoOficial: row.raw_data.enderecoOficial || row.endereco_oficial || "",
+          cidade: row.raw_data.cidade || row.cidade || "",
+          estado: row.raw_data.estado || row.estado || "",
+          telefone: row.raw_data.telefone || row.telefone || "",
+          email: row.raw_data.email || row.email || "",
+          createdAt: row.raw_data.createdAt || row.created_at
+        };
+      }
+      return {
+        id: row.id,
+        razaoSocial: row.razao_social || "",
+        nomeFantasia: row.nome_fantasia || "",
+        cnpj: row.cnpj || "",
+        site: row.site || "",
+        segmento: row.segmento || "",
+        setorAtuacao: row.setor_atuacao || "",
+        cnaePrincipal: row.cnae_principal || "",
+        capitalSocial: row.capital_social || "",
+        enderecoOficial: row.endereco_oficial || "",
+        cidade: row.cidade || "",
+        estado: row.estado || "",
+        telefone: row.telefone || "",
+        email: row.email || "",
+        createdAt: row.created_at
+      };
+    });
+    const decisionMakers = dmsRes.rows.map((row) => {
+      let contacts = [];
+      let sources = [];
+      try {
+        contacts = typeof row.contacts === "string" ? JSON.parse(row.contacts) : row.contacts || [];
+      } catch (e) {
+      }
+      try {
+        sources = typeof row.sources === "string" ? JSON.parse(row.sources) : row.sources || [];
+      } catch (e) {
+      }
+      return {
+        id: row.id,
+        leadId: row.lead_id,
+        name: row.name,
+        role: row.role || "",
+        department: row.department || "",
+        ranking: row.ranking || 1,
+        confidence: row.confidence || 90,
+        contacts,
+        sources,
+        status: row.status || "Encontrado",
+        runId: row.run_id || "",
+        isNevineTargetRole: !!row.is_nevine_target_role,
+        nevineCategory: row.nevine_category || void 0,
+        nevineKeyMetric: row.nevine_key_metric || void 0,
+        linkedinVerified: !!row.linkedin_verified,
+        ...row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {}
+      };
+    });
+    const discoveries = discRes.rows.map((row) => ({
+      id: row.id,
+      leadId: row.lead_id,
+      field: row.field_name,
+      fieldLabel: row.field_label || row.field_name,
+      rawValue: row.raw_value || "",
+      cleanValue: row.clean_value || "",
+      sourceName: row.source_name || "",
+      sourceUrl: row.source_url || "",
+      confidence: row.confidence || 90,
+      importance: row.importance || "Alta",
+      utility: row.utility || "Alta",
+      evidence: row.evidence || "",
+      status: row.status || "Encontrado",
+      authorIA: row.author_ia || "Matrix Engine",
+      date: row.date || "",
+      time: row.time || "",
+      runId: row.run_id || "",
+      buttonId: row.button_id || "",
+      rawJSON: row.raw_json || ""
+    }));
+    const runs = runsRes.rows.map((row) => ({
+      id: row.id,
+      leadId: row.lead_id,
+      buttonId: row.button_id || "",
+      buttonName: row.button_name || "",
+      date: row.date || "",
+      time: row.time || "",
+      durationMs: row.duration_ms || 0,
+      cost: parseFloat(row.cost_estimated || "0.00"),
+      apiCallsCount: row.api_calls_count || 1
+    }));
+    const aiAnalysis = {};
+    aiRes.rows.forEach((row) => {
+      let playbook = null;
+      let luxuryFactors = [];
+      try {
+        playbook = typeof row.playbook === "string" ? JSON.parse(row.playbook) : row.playbook;
+      } catch (e) {
+      }
+      try {
+        luxuryFactors = typeof row.luxury_factors === "string" ? JSON.parse(row.luxury_factors) : row.luxury_factors || [];
+      } catch (e) {
+      }
+      aiAnalysis[row.lead_id] = {
+        id: row.id,
+        leadId: row.lead_id,
+        icpScore: row.icp_score || 0,
+        purchasePotential: row.purchase_potential || 0,
+        luxuryProfile: !!row.luxury_profile,
+        luxuryScore: row.luxury_score || 0,
+        luxuryFactors,
+        priority: row.priority || "M\xE9dia",
+        justification: row.justification || "",
+        risk: row.risk || "",
+        playbook: playbook || { whatsapp: "", email: "", ligacao: "", objecoes: [], produtosIndicados: [] },
+        apiDossier: row.api_dossier || "",
+        date: row.date || "",
+        time: row.time || "",
+        ...row.raw_data && typeof row.raw_data === "object" ? row.raw_data : {}
+      };
+    });
+    const history = histRes.rows.map((row) => ({
+      id: row.id,
+      leadId: row.lead_id,
+      field: row.field,
+      fieldLabel: row.field_label,
+      oldValue: row.old_value,
+      newValue: row.new_value,
+      date: row.date,
+      time: row.time,
+      user: row.user_name
+    }));
+    const conflicts = confRes.rows.map((row) => ({
+      id: row.id,
+      leadId: row.lead_id,
+      field: row.field,
+      fieldLabel: row.field_label,
+      currentValue: row.current_value,
+      valueA: row.value_a,
+      sourceA: row.source_a,
+      valueB: row.value_b,
+      sourceB: row.source_b,
+      status: row.status
+    }));
+    return res.json({
+      connected: true,
+      leads,
+      decisionMakers,
+      discoveries,
+      runs,
+      aiAnalysis,
+      history,
+      conflicts,
+      serverTime: (/* @__PURE__ */ new Date()).toISOString()
+    });
+  } catch (err) {
+    console.error("[Neon DB] Erro em /api/db/full-store:", err);
+    return res.status(500).json({ error: err.message || "Erro ao carregar dados do Neon" });
   }
 });
 app.post("/api/db/save-lead", async (req, res) => {
@@ -1355,7 +1797,7 @@ app.post("/api/db/save-lead", async (req, res) => {
     });
   }
   try {
-    const { lead, decisionMakers = [], discoveries = [], runs = [] } = req.body;
+    const { lead, decisionMakers = [], discoveries = [], runs = [], aiAnalysis, history = [], conflicts = [] } = req.body;
     if (!lead || !lead.id) {
       return res.status(400).json({ error: "Lead inv\xE1lido ou sem ID" });
     }
@@ -1417,8 +1859,8 @@ app.post("/api/db/save-lead", async (req, res) => {
         INSERT INTO decision_makers (
           id, lead_id, name, role, department, ranking, confidence,
           is_nevine_target_role, nevine_category, nevine_key_metric,
-          linkedin_url, linkedin_verified, contacts, sources, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          linkedin_url, linkedin_verified, contacts, sources, status, run_id, raw_data
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         ON CONFLICT (id) DO UPDATE SET
           name = EXCLUDED.name,
           role = EXCLUDED.role,
@@ -1432,7 +1874,9 @@ app.post("/api/db/save-lead", async (req, res) => {
           linkedin_verified = EXCLUDED.linkedin_verified,
           contacts = EXCLUDED.contacts,
           sources = EXCLUDED.sources,
-          status = EXCLUDED.status;
+          status = EXCLUDED.status,
+          run_id = EXCLUDED.run_id,
+          raw_data = EXCLUDED.raw_data;
       `, [
         dm.id,
         lead.id,
@@ -1448,26 +1892,187 @@ app.post("/api/db/save-lead", async (req, res) => {
         !!dm.linkedinVerified,
         JSON.stringify(dm.contacts || []),
         JSON.stringify(dm.sources || []),
-        dm.status || "Encontrado"
+        dm.status || "Encontrado",
+        dm.runId || "",
+        JSON.stringify(dm)
+      ]);
+    }
+    for (const d of discoveries) {
+      if (!d.id) continue;
+      await query(`
+        INSERT INTO lead_discoveries (
+          id, lead_id, field_name, field_label, raw_value, clean_value,
+          source_name, source_url, confidence, importance, utility, evidence,
+          status, author_ia, date, time, run_id, button_id, raw_json
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+        ON CONFLICT (id) DO UPDATE SET
+          field_label = EXCLUDED.field_label,
+          raw_value = EXCLUDED.raw_value,
+          clean_value = EXCLUDED.clean_value,
+          source_name = EXCLUDED.source_name,
+          source_url = EXCLUDED.source_url,
+          confidence = EXCLUDED.confidence,
+          importance = EXCLUDED.importance,
+          utility = EXCLUDED.utility,
+          evidence = EXCLUDED.evidence,
+          status = EXCLUDED.status,
+          author_ia = EXCLUDED.author_ia,
+          date = EXCLUDED.date,
+          time = EXCLUDED.time,
+          run_id = EXCLUDED.run_id,
+          button_id = EXCLUDED.button_id,
+          raw_json = EXCLUDED.raw_json;
+      `, [
+        d.id,
+        lead.id,
+        d.field,
+        d.fieldLabel || d.field,
+        d.rawValue || "",
+        d.cleanValue || "",
+        d.sourceName || "",
+        d.sourceUrl || "",
+        d.confidence || 90,
+        d.importance || "Alta",
+        d.utility || "Alta",
+        d.evidence || "",
+        d.status || "Encontrado",
+        d.authorIA || "Matrix Engine",
+        d.date || "",
+        d.time || "",
+        d.runId || "",
+        d.buttonId || "",
+        d.rawJSON || ""
+      ]);
+    }
+    for (const r of runs) {
+      if (!r.id) continue;
+      await query(`
+        INSERT INTO enrichment_runs (
+          id, lead_id, button_id, button_name, date, time, duration_ms, cost_estimated, api_calls_count
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (id) DO UPDATE SET
+          button_name = EXCLUDED.button_name,
+          duration_ms = EXCLUDED.duration_ms,
+          cost_estimated = EXCLUDED.cost_estimated,
+          api_calls_count = EXCLUDED.api_calls_count;
+      `, [
+        r.id,
+        lead.id,
+        r.buttonId || "",
+        r.buttonName || "",
+        r.date || "",
+        r.time || "",
+        r.durationMs || 0,
+        r.cost || 0,
+        r.apiCallsCount || 1
+      ]);
+    }
+    if (aiAnalysis) {
+      const anaId = aiAnalysis.id || "ana_" + lead.id;
+      await query(`
+        INSERT INTO lead_ai_analyses (
+          id, lead_id, icp_score, purchase_potential, luxury_profile, luxury_score,
+          luxury_factors, priority, justification, risk, playbook, api_dossier,
+          date, time, raw_data, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP)
+        ON CONFLICT (lead_id) DO UPDATE SET
+          icp_score = EXCLUDED.icp_score,
+          purchase_potential = EXCLUDED.purchase_potential,
+          luxury_profile = EXCLUDED.luxury_profile,
+          luxury_score = EXCLUDED.luxury_score,
+          luxury_factors = EXCLUDED.luxury_factors,
+          priority = EXCLUDED.priority,
+          justification = EXCLUDED.justification,
+          risk = EXCLUDED.risk,
+          playbook = EXCLUDED.playbook,
+          api_dossier = EXCLUDED.api_dossier,
+          date = EXCLUDED.date,
+          time = EXCLUDED.time,
+          raw_data = EXCLUDED.raw_data,
+          updated_at = CURRENT_TIMESTAMP;
+      `, [
+        anaId,
+        lead.id,
+        aiAnalysis.icpScore || 0,
+        aiAnalysis.purchasePotential || 0,
+        !!aiAnalysis.luxuryProfile,
+        aiAnalysis.luxuryScore || 0,
+        JSON.stringify(aiAnalysis.luxuryFactors || []),
+        aiAnalysis.priority || "M\xE9dia",
+        aiAnalysis.justification || "",
+        aiAnalysis.risk || "",
+        JSON.stringify(aiAnalysis.playbook || {}),
+        aiAnalysis.apiDossier || "",
+        aiAnalysis.date || "",
+        aiAnalysis.time || "",
+        JSON.stringify(aiAnalysis)
       ]);
     }
     return res.json({
       success: true,
-      message: `Lead ${lead.nomeFantasia || lead.razaoSocial} salvo com sucesso no banco Neon PostgreSQL!`
+      message: `Lead ${lead.nomeFantasia || lead.razaoSocial} sincronizado com sucesso no banco Neon PostgreSQL!`
     });
   } catch (err) {
     console.error("[Neon DB] Erro ao salvar lead:", err);
     return res.status(500).json({ error: err.message || "Erro ao sincronizar com o banco Neon" });
   }
 });
-app.get("/api/db/leads", async (req, res) => {
+app.delete("/api/db/lead/:id", async (req, res) => {
   const pool2 = getDbPool();
   if (!pool2) {
-    return res.json({ leads: [] });
+    return res.json({ success: true, localOnly: true });
   }
   try {
-    const result = await query("SELECT * FROM leads ORDER BY updated_at DESC LIMIT 100");
-    return res.json({ leads: result.rows });
+    const { id } = req.params;
+    await query("DELETE FROM leads WHERE id = $1", [id]);
+    return res.json({ success: true, message: `Lead ${id} exclu\xEDdo com sucesso do banco de dados Neon.` });
+  } catch (err) {
+    console.error("[Neon DB] Erro ao excluir lead:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+app.post("/api/db/sync-batch", async (req, res) => {
+  const pool2 = getDbPool();
+  if (!pool2) {
+    return res.json({ success: false, message: "Banco de dados n\xE3o conectado" });
+  }
+  try {
+    const { leads = [] } = req.body;
+    for (const lead of leads) {
+      if (!lead || !lead.id) continue;
+      await query(`
+        INSERT INTO leads (
+          id, razao_social, nome_fantasia, cnpj, site, segmento, setor_atuacao,
+          cnae_principal, situacao_cadastral, capital_social, endereco_oficial,
+          cidade, estado, telefone, email, icp_score, luxury_score, is_luxury_profile,
+          justificativa_ia, risco_ia, raw_data, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, CURRENT_TIMESTAMP)
+        ON CONFLICT (id) DO NOTHING;
+      `, [
+        lead.id,
+        lead.razaoSocial || lead.nomeFantasia || "",
+        lead.nomeFantasia || "",
+        lead.cnpj || "",
+        lead.site || "",
+        lead.segmento || "",
+        lead.setorAtuacao || "",
+        lead.cnaePrincipal || "",
+        lead.situacaoOficial || "ATIVA",
+        lead.capitalSocial || "",
+        lead.enderecoOficial || "",
+        lead.cidade || "",
+        lead.estado || "",
+        lead.telefone || "",
+        lead.email || "",
+        lead.icpScore || 0,
+        lead.luxuryScore || 0,
+        !!lead.isLuxuryProfile,
+        lead.justificativaIa || "",
+        lead.riscoIa || "",
+        JSON.stringify(lead)
+      ]);
+    }
+    return res.json({ success: true, count: leads.length });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -3113,7 +3718,8 @@ function generateMockB2BData(lead, buttonId, currentDiscoveries, startTime, isQu
       priority: icpScore > 85 ? "Alta" : "M\xE9dia",
       justification: `Empresa demonstra excelente perfil de qualifica\xE7\xE3o comercial (Score de Alto Padr\xE3o: ${luxuryEval.score}/100) no segmento de ${specificSector}. Destaques mapeados: ${luxuryEval.matchingFactors.join("; ")}.`,
       risk: `Risco extremamente baixo. O relacionamento principal \xE9 guiado de forma segura e estrat\xE9gica baseada nas premissas de atua\xE7\xE3o da Nevine.`,
-      playbook: getNevinePlaybook(lead, segment, specificSector)
+      playbook: getNevinePlaybook(lead, segment, specificSector),
+      dossieTexto: generateDeterministicDossie(lead, decisionMakers, newDiscoveries)
     },
     nextButtonRecommendation
   };

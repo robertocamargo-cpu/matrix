@@ -547,6 +547,31 @@ export const LeadStatsSidebar: React.FC<LeadStatsSidebarProps> = ({
 
       {pendingGaps.length > 0 && <hr className="border-slate-800" />}
 
+      {/* Dossie Comercial Pre-Abordagem Card */}
+      <div 
+        onClick={() => onNavigateToTab(5)}
+        className="bg-gradient-to-r from-indigo-950/70 to-slate-900 border border-indigo-500/30 hover:border-indigo-400/60 p-3.5 rounded-xl cursor-pointer transition-all hover:scale-[1.01] shadow-md group"
+      >
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-amber-400 group-hover:rotate-12 transition-transform" />
+            <span className="text-[11px] font-black uppercase tracking-wider text-indigo-300">
+              Dossiê Pré-Abordagem
+            </span>
+          </div>
+          <span className="text-[9px] bg-indigo-500/20 text-indigo-200 px-2 py-0.5 rounded-full border border-indigo-500/30 font-mono">
+            Vendedor
+          </span>
+        </div>
+        <p className="text-[11px] text-slate-300 leading-snug">
+          Resumo inteligente estruturado com o argumento ideal para prospecção da Nevine.
+        </p>
+        <div className="mt-2 text-[10px] text-indigo-400 font-bold flex items-center gap-1 group-hover:text-indigo-200">
+          <span>Abrir Dossiê & Script</span>
+          <ArrowRight className="h-3 w-3 group-hover:translate-x-1 transition-transform" />
+        </div>
+      </div>
+
       {/* Recommended Next step button widget */}
       <div className="bg-indigo-950/40 p-3.5 rounded-xl border border-indigo-500/20 text-slate-200">
         <div className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest flex items-center gap-1.5 mb-1.5">

@@ -163,6 +163,8 @@ export interface LeadAIAnalysis {
   date: string;
   time: string;
   apiDossier?: string;
+  dossieTexto?: string;
+  resumoVendedor?: string;
 }
 
 export interface LeadScoreCriteria {

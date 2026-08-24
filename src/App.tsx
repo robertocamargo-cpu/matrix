@@ -19,12 +19,14 @@ import { LeadStatsSidebar } from './components/LeadStatsSidebar';
 import { NevineProfile } from './components/NevineProfile';
 import { FieldsList } from './components/FieldsList';
 import { VagasList } from './components/VagasList';
+import { DossieVendedor } from './components/DossieVendedor';
 import { 
   Building2, TrendingUp, Sparkles, ShieldAlert,
   HelpCircle, CheckCircle, FileText, Landmark, Zap,
   Key, AlertTriangle, Cpu, ExternalLink, Layers,
   FileDown, Copy, MessageSquare, Briefcase,
-  Sliders, ShieldCheck, RefreshCw, Clock, Globe, Wifi, X
+  Sliders, ShieldCheck, RefreshCw, Clock, Globe, Wifi, X,
+  Database, Cloud
 } from 'lucide-react';
 
 import { calculateLuxuryScore } from './utils/luxury';
@@ -219,6 +221,7 @@ export default function App() {
 
   // Enrichment session states
   const [isEnriching, setIsEnriching] = useState<boolean>(false);
+  const [enrichingLeadInfo, setEnrichingLeadInfo] = useState<{ id: string; name: string } | null>(null);
   const [enrichmentProgress, setEnrichmentProgress] = useState<number>(0);
   const [currentActiveButton, setCurrentActiveButton] = useState<string | null>(null);
   const [recentReport, setRecentReport] = useState<string | null>(null);
@@ -257,6 +260,11 @@ export default function App() {
   const [isTestingProxy, setIsTestingProxy] = useState<boolean>(false);
   const [proxyMessage, setProxyMessage] = useState<{ text: string, type: 'success' | 'error' } | null>(null);
 
+  // Neon PostgreSQL Cloud Synchronization State
+  const [dbConnected, setDbConnected] = useState<boolean>(true);
+  const [isDbSyncing, setIsDbSyncing] = useState<boolean>(false);
+  const [lastDbSyncTime, setLastDbSyncTime] = useState<string | null>(null);
+
   // High-Latency Warning Logger Callback
   const handleHighLatencyAlert = (warnLog: LeadLog) => {
     setLogs(prev => [warnLog, ...prev]);
@@ -264,30 +272,33 @@ export default function App() {
       {
         id: 'hist_' + Math.random().toString(36).substring(2, 9),
         leadId: warnLog.leadId,
+        field: 'system_latency',
+        fieldLabel: 'Alerta de Latência da API',
+        oldValue: 'Latência Normal (<4s)',
+        newValue: warnLog.message,
         date: new Date().toISOString().split('T')[0],
         time: new Date().toLocaleTimeString(),
-        eventType: 'Alerta de Latência',
-        title: '⚠️ Aviso de Latência Alta na Conexão',
-        details: warnLog.message,
-        author: 'Monitor de Rede B2B'
+        user: 'Monitor de Latência em Tempo Real'
       },
       ...prev
     ]);
   };
 
-  // API Latency Monitoring Hook
-  const { latencyHistory, trackApiCall } = useApiLatencyMonitor(
-    selectedLeadId || undefined,
-    handleHighLatencyAlert
-  );
+  // Attach Real-Time Latency Watchdog
+  useApiLatencyMonitor({
+    isEnriching,
+    activeButtonId: currentActiveButton,
+    selectedLeadId,
+    onHighLatencyAlert: handleHighLatencyAlert
+  });
 
   const fetchProxySettings = async () => {
     try {
-      const resp = await fetch('/api/settings/proxy');
-      if (resp.ok) {
-        const data = await resp.json();
+      const res = await fetch('/api/settings/proxy');
+      if (res.ok) {
+        const data = await res.json();
         setIsProxyEnabled(!!data.enabled);
-        setProxyUrlInput(data.rawUrl || '');
+        setProxyUrlInput(data.proxyUrl || '');
         setProxyProvider(data.provider || 'custom');
         setProxyStatus(data.status || 'idle');
         setProxyLatency(data.latencyMs || 0);
@@ -300,22 +311,23 @@ export default function App() {
 
   const handleSaveProxySettings = async () => {
     try {
-      const resp = await fetch('/api/settings/proxy', {
+      const res = await fetch('/api/settings/proxy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           enabled: isProxyEnabled,
-          url: proxyUrlInput,
+          proxyUrl: proxyUrlInput,
           provider: proxyProvider
         })
       });
-      const data = await resp.json();
-      if (resp.ok && data.success) {
-        setProxyMessage({ text: "Configuração do Proxy de Automação salva com sucesso!", type: 'success' });
+      if (res.ok) {
+        const data = await res.json();
+        setProxyMessage({ text: 'Configurações de proxy salvas com sucesso!', type: 'success' });
         setTimeout(() => setProxyMessage(null), 4000);
       }
     } catch (e: any) {
-      setProxyMessage({ text: "Erro ao salvar proxy: " + e.message, type: 'error' });
+      setProxyMessage({ text: `Erro ao salvar proxy: ${e.message}`, type: 'error' });
+      setTimeout(() => setProxyMessage(null), 5000);
     }
   };
 
@@ -323,27 +335,30 @@ export default function App() {
     setIsTestingProxy(true);
     setProxyMessage(null);
     try {
-      const { data } = await trackApiCall<any>('/api/test-proxy', () => 
-        fetch('/api/test-proxy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: proxyUrlInput })
-        }),
-        'POST'
-      );
-
-      if (data.success) {
+      const res = await fetch('/api/test-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          proxyUrl: proxyUrlInput,
+          enabled: isProxyEnabled
+        })
+      });
+      const data = await res.json();
+      if (data.ok) {
         setProxyStatus('connected');
-        setProxyLatency(data.latencyMs);
-        setProxyOutboundIp(data.outboundIp || 'Conectado');
-        setProxyMessage({ text: `✓ Conexão bem-sucedida! Latência: ${data.latencyMs}ms (IP: ${data.outboundIp || 'Ativo'})`, type: 'success' });
+        setProxyLatency(data.latencyMs || 0);
+        setProxyOutboundIp(data.outboundIp || '');
+        setProxyMessage({ 
+          text: `✓ Conexão bem-sucedida! IP de Saída: ${data.outboundIp || 'Desconhecido'} (Latência: ${data.latencyMs}ms)`, 
+          type: 'success' 
+        });
       } else {
         setProxyStatus('error');
-        setProxyMessage({ text: `Falha: ${data.error || 'Erro na conexão'}`, type: 'error' });
+        setProxyMessage({ text: `✗ Falha no teste: ${data.error || 'Não foi possível conectar ao proxy'}`, type: 'error' });
       }
     } catch (e: any) {
       setProxyStatus('error');
-      setProxyMessage({ text: "Falha de rede ao testar proxy: " + e.message, type: 'error' });
+      setProxyMessage({ text: `✗ Erro na conexão com o proxy: ${e.message}`, type: 'error' });
     } finally {
       setIsTestingProxy(false);
     }
@@ -351,11 +366,11 @@ export default function App() {
 
   const fetchPdlCredits = async () => {
     try {
-      const resp = await fetch('/api/pdl-credits');
-      if (resp.ok) {
-        const data = await resp.json();
-        setPdlCredits(data.credits);
-        setIsPdlConfigured(data.isConfigured);
+      const res = await fetch('/api/pdl-credits');
+      if (res.ok) {
+        const data = await res.json();
+        setPdlCredits(data.creditsRemaining || 0);
+        setIsPdlConfigured(!!data.isConfigured);
       }
     } catch (e) {
       console.warn("Could not fetch PDL credits:", e);
@@ -364,9 +379,9 @@ export default function App() {
 
   const fetchGeminiState = async () => {
     try {
-      const resp = await fetch('/api/gemini-state');
-      if (resp.ok) {
-        const data = await resp.json();
+      const res = await fetch('/api/gemini-state');
+      if (res.ok) {
+        const data = await res.json();
         setGeminiBackendState(data);
       }
     } catch (e) {
@@ -378,15 +393,20 @@ export default function App() {
     setIsUpdatingGeminiKey(true);
     setGeminiKeySuccessMessage(null);
     try {
-      const resp = await fetch('/api/set-gemini-key', {
+      const res = await fetch('/api/set-gemini-key', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key: keyToSet })
+        body: JSON.stringify({ geminiKey: keyToSet.trim() })
       });
-      const data = await resp.json();
-      if (resp.ok && data.success) {
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setGeminiBackendState({
+          hasCustomKey: !!keyToSet.trim(),
+          isConfigured: data.isConfigured,
+          customKeyMasked: data.customKeyMasked
+        });
         setGeminiKeySuccessMessage(data.message);
-        await fetchGeminiState();
+        setTimeout(() => setGeminiKeySuccessMessage(null), 5000);
         if (keyToSet) {
           setGeminiInputKey('');
         }
@@ -398,7 +418,118 @@ export default function App() {
     }
   };
 
-  // Load from LocalStorage
+  // Helper to persist single lead and its related entities to Neon PostgreSQL (Atomic & Optimized)
+  const persistLeadToDb = (
+    targetLead: Lead,
+    currentDMs?: LeadDecisionMaker[],
+    currentDiscoveries?: LeadDiscovery[],
+    currentRuns?: LeadEnrichmentRun[],
+    currentAI?: Record<string, LeadAIAnalysis>,
+    currentHist?: LeadHistory[],
+    currentConflicts?: LeadConflict[]
+  ) => {
+    if (!targetLead || !targetLead.id) return;
+    const dmsToSave = (currentDMs || decisionMakers).filter(dm => dm.leadId === targetLead.id);
+    const discToSave = (currentDiscoveries || discoveries).filter(d => d.leadId === targetLead.id);
+    const runsToSave = (currentRuns || runs).filter(r => r.leadId === targetLead.id);
+    const aiToSave = (currentAI || aiAnalysis)[targetLead.id];
+    const histToSave = (currentHist || history).filter(h => h.leadId === targetLead.id);
+    const confToSave = (currentConflicts || conflicts).filter(c => c.leadId === targetLead.id);
+
+    fetch('/api/db/save-lead', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lead: targetLead,
+        decisionMakers: dmsToSave,
+        discoveries: discToSave,
+        runs: runsToSave,
+        aiAnalysis: aiToSave,
+        history: histToSave,
+        conflicts: confToSave
+      })
+    })
+    .then(r => r.json())
+    .then(res => {
+      if (res && res.success) {
+        setDbConnected(true);
+        setLastDbSyncTime(new Date().toLocaleTimeString('pt-BR'));
+      }
+    })
+    .catch(err => {
+      console.warn('[Neon DB Save]:', err?.message || err);
+    });
+  };
+
+  // Helper to delete lead from Neon PostgreSQL
+  const deleteLeadFromDb = (leadId: string) => {
+    fetch(`/api/db/lead/${leadId}`, { method: 'DELETE' })
+      .then(r => r.json())
+      .then(res => {
+        if (res && res.success) {
+          setLastDbSyncTime(new Date().toLocaleTimeString('pt-BR'));
+        }
+      })
+      .catch(err => console.warn('[Neon DB Delete]:', err?.message || err));
+  };
+
+  // Sync entire store from Neon PostgreSQL (Stale-While-Revalidate Strategy)
+  const syncWithDatabase = async (silent = false) => {
+    if (!silent) setIsDbSyncing(true);
+    try {
+      const res = await fetch('/api/db/full-store');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      if (data.connected) {
+        setDbConnected(true);
+        if (data.leads && data.leads.length > 0) {
+          setLeads(data.leads);
+          setSelectedLeadId(prevId => {
+            if (prevId && data.leads.some((l: Lead) => l.id === prevId)) {
+              return prevId;
+            }
+            return data.leads[0].id;
+          });
+          setRuns(data.runs || []);
+          setDiscoveries(data.discoveries || []);
+          setDecisionMakers(data.decisionMakers || []);
+          setAiAnalysis(data.aiAnalysis || {});
+          setHistory(data.history || []);
+          setConflicts(data.conflicts || []);
+
+          saveState(
+            data.leads,
+            data.leads[0].id,
+            data.runs || [],
+            data.discoveries || [],
+            data.decisionMakers || [],
+            data.aiAnalysis || {},
+            logs,
+            data.history || [],
+            data.conflicts || []
+          );
+        } else {
+          // If Neon database is completely empty on first deploy, initialize with preloaded leads
+          fetch('/api/db/sync-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ leads: PRELOADED_LEADS })
+          }).catch(e => console.warn('[Neon Bootstrap]:', e));
+        }
+        setLastDbSyncTime(new Date().toLocaleTimeString('pt-BR'));
+      } else {
+        setDbConnected(false);
+      }
+    } catch (e) {
+      console.warn('[Neon Sync Error]:', e);
+      setDbConnected(false);
+    } finally {
+      setIsDbSyncing(false);
+    }
+  };
+
+  // Load from LocalStorage immediately for instant UX, then sync with Neon PostgreSQL
   useEffect(() => {
     fetchPdlCredits();
     fetchGeminiState();
@@ -427,6 +558,22 @@ export default function App() {
     } else {
       initDefaultStore();
     }
+
+    // Background sync with Neon PostgreSQL
+    syncWithDatabase(false);
+
+    // Subtle sync on window focus (controlled frequency, min 15s interval)
+    let lastFocusTime = Date.now();
+    const handleWindowFocus = () => {
+      const now = Date.now();
+      if (now - lastFocusTime > 15000 && !isEnriching) {
+        lastFocusTime = now;
+        syncWithDatabase(true);
+      }
+    };
+
+    window.addEventListener('focus', handleWindowFocus);
+    return () => window.removeEventListener('focus', handleWindowFocus);
   }, []);
 
   // Save to LocalStorage
@@ -557,6 +704,7 @@ export default function App() {
     setAiAnalysis(nextAI);
 
     saveState(updatedLeads, fresh.id, runs, discoveries, decisionMakers, nextAI, updatedLogs, history, conflicts);
+    persistLeadToDb(fresh, [], [], [], nextAI, updatedLogs, conflicts);
   };
 
   const handleEditLead = (editedLead: Lead) => {
@@ -660,6 +808,7 @@ export default function App() {
     
     setAiAnalysis(updatedAI);
     saveState(updatedLeads, selectedLeadId, nextRuns, nextDiscoveries, nextDMs, updatedAI, nextLogs, history, nextConflicts);
+    persistLeadToDb(editedLead, nextDMs, nextDiscoveries, nextRuns, updatedAI, nextLogs, nextConflicts);
   };
 
   const handleDeleteLead = (id: string) => {
@@ -692,6 +841,7 @@ export default function App() {
     setAiAnalysis(freshAI);
 
     saveState(updatedLeads, nextSelected, updatedRuns, updatedDiscoveries, updatedDMs, freshAI, updatedLogs, updatedHist, updatedConflicts);
+    deleteLeadFromDb(id);
   };
 
   const handleSelectLead = (id: string) => {
@@ -732,8 +882,12 @@ export default function App() {
     const activeLead = getActiveLead();
     if (!activeLead || isEnriching) return;
 
+    const targetLead = { ...activeLead };
+    setEnrichingLeadInfo({ id: targetLead.id, name: targetLead.nomeFantasia || targetLead.razaoSocial || 'Lead' });
+
     if (buttonId === 'pdl' && pdlCredits <= 0) {
       setPdlErrorAlert("Seu limite de 100 créditos de consulta mensais do People Data Labs (PDL) está esgotado. A consulta de enriquecimento avançado e localização de contatos de decisão foi bloqueada para proteger as cotas de segurança do sistema.");
+      setEnrichingLeadInfo(null);
       return;
     }
 
@@ -745,10 +899,10 @@ export default function App() {
     let baseConflicts = conflicts;
 
     if (buttonId === 'identify-company') {
-      baseDiscoveries = discoveries.filter(d => d.leadId !== activeLead.id);
-      baseDMs = decisionMakers.filter(dm => dm.leadId !== activeLead.id);
-      baseRuns = runs.filter(r => r.leadId !== activeLead.id);
-      baseConflicts = conflicts.filter(c => c.leadId !== activeLead.id);
+      baseDiscoveries = discoveries.filter(d => d.leadId !== targetLead.id);
+      baseDMs = decisionMakers.filter(dm => dm.leadId !== targetLead.id);
+      baseRuns = runs.filter(r => r.leadId !== targetLead.id);
+      baseConflicts = conflicts.filter(c => c.leadId !== targetLead.id);
 
       setDiscoveries(baseDiscoveries);
       setDecisionMakers(baseDMs);
@@ -777,9 +931,9 @@ export default function App() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            lead: activeLead,
+            lead: targetLead,
             buttonId,
-            currentDiscoveries: baseDiscoveries.filter(d => d.leadId === activeLead.id),
+            currentDiscoveries: baseDiscoveries.filter(d => d.leadId === targetLead.id),
             pdlFilters
           })
         }),
@@ -795,6 +949,7 @@ export default function App() {
       // We have new results! Process discoveries, runs, logs and decision makers
       setTimeout(() => {
         setIsEnriching(false);
+        setEnrichingLeadInfo(null);
         setCurrentActiveButton(null);
 
         // Process logs
@@ -958,16 +1113,7 @@ export default function App() {
         // Auto-sync enriched lead data to Neon PostgreSQL Database
         const currentSavedLead = nextLeads.find(l => l.id === activeLead.id);
         if (currentSavedLead) {
-          fetch('/api/db/save-lead', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              lead: currentSavedLead,
-              decisionMakers: nextDMs.filter(dm => dm.leadId === activeLead.id),
-              discoveries: nextDiscoveries.filter(d => d.leadId === activeLead.id),
-              runs: nextRuns.filter(r => r.leadId === activeLead.id)
-            })
-          }).catch(err => console.log('[Neon Sync]:', err?.message || err));
+          persistLeadToDb(currentSavedLead, nextDMs, nextDiscoveries, nextRuns, nextAI, history, nextConflicts);
         }
       }, 300);
 
@@ -1066,6 +1212,7 @@ export default function App() {
     setAiAnalysis(updatedAI);
 
     saveState(updatedLeads, activeLead.id, runs, updatedDiscoveries, decisionMakers, updatedAI, nextLogs, nextHist, conflicts);
+    persistLeadToDb(updatedActiveLead, decisionMakers, updatedDiscoveries, runs, updatedAI, nextLogs, conflicts);
   };
 
   const handleRejectDiscovery = (discoveryId: string) => {
@@ -1081,6 +1228,7 @@ export default function App() {
     setDiscoveries(updatedDiscoveries);
 
     addLogLocal(`Informação de ID ${discoveryId} rejeitada manualmente pelo auditor.`, 'info');
+    persistLeadToDb(activeLead, decisionMakers, updatedDiscoveries, runs, aiAnalysis, logs, conflicts);
   };
 
   // ENGINE: CONFLICT RESOLUTION
@@ -1154,7 +1302,9 @@ export default function App() {
     ];
     setLogs(nextLogs);
 
+    const updatedActiveLead = { ...activeLead, [mappedFieldKey]: acceptedValue };
     saveState(updatedLeads, activeLead.id, runs, updatedDiscoveries, decisionMakers, aiAnalysis, nextLogs, nextHist, updatedConflicts);
+    persistLeadToDb(updatedActiveLead, decisionMakers, updatedDiscoveries, runs, aiAnalysis, nextLogs, updatedConflicts);
   };
 
   const handleUpdatePlaybook = (updatedPlaybook: Playbook) => {
@@ -1173,9 +1323,41 @@ export default function App() {
     };
     setAiAnalysis(updatedAnalysis);
     saveState(leads, activeLead.id, runs, discoveries, decisionMakers, updatedAnalysis, logs, history, conflicts);
+    persistLeadToDb(activeLead, decisionMakers, discoveries, runs, updatedAnalysis, logs, conflicts);
+  };
+
+  const handleUpdateDossie = (newDossieText: string) => {
+    const activeLead = getActiveLead();
+    if (!activeLead) return;
+
+    const currentAnalysis = aiAnalysis[activeLead.id] || {
+      id: 'ana_' + Math.random().toString(36).substring(2, 9),
+      leadId: activeLead.id,
+      icpScore: 85,
+      purchasePotential: 80,
+      luxuryProfile: false,
+      priority: 'Média',
+      justification: '',
+      risk: '',
+      playbook: { whatsapp: '', email: '', ligacao: '', objecoes: [], produtosIndicados: [] },
+      date: new Date().toISOString().split('T')[0],
+      time: new Date().toLocaleTimeString()
+    };
+
+    const updatedAnalysis = {
+      ...aiAnalysis,
+      [activeLead.id]: {
+        ...currentAnalysis,
+        dossieTexto: newDossieText
+      }
+    };
+    setAiAnalysis(updatedAnalysis);
+    saveState(leads, activeLead.id, runs, discoveries, decisionMakers, updatedAnalysis, logs, history, conflicts);
+    persistLeadToDb(activeLead, decisionMakers, discoveries, runs, updatedAnalysis, logs, conflicts);
   };
 
   const handleUpdateDecisionMakerStatus = (dmId: string, status: 'Confirmado' | 'Rejeitado' | 'Trabalha em outro lugar') => {
+    const activeLead = getActiveLead();
     if (!activeLead) return;
     const nextDecisionMakers = decisionMakers.map(dm => 
       dm.id === dmId ? { ...dm, status } : dm
@@ -1198,6 +1380,7 @@ export default function App() {
     setLogs(nextLogs);
     
     saveState(leads, activeLead.id, runs, discoveries, nextDecisionMakers, aiAnalysis, nextLogs, history, conflicts);
+    persistLeadToDb(activeLead, nextDecisionMakers, discoveries, runs, aiAnalysis, nextLogs, conflicts);
   };
 
   // ENGINE: CLEAR ACCUMULATED ENRICHMENT DATA FOR A SPECIFIC LEAD
@@ -1215,6 +1398,7 @@ export default function App() {
     setHistory(nextHistory);
     setActiveTab(0); // Safely return to Descobertas tab
 
+    let cleanLeadTarget: Lead | null = null;
     const updatedLeads = leads.map(l => {
       if (l.id === leadId) {
         // Construct a clean lead keeping strictly the core user-filled input keys
@@ -1230,6 +1414,7 @@ export default function App() {
             resetLead[key] = (l as any)[key];
           }
         });
+        cleanLeadTarget = resetLead as Lead;
         return resetLead as Lead;
       }
       return l;
@@ -1265,29 +1450,36 @@ export default function App() {
       nextHistory,
       nextConflicts
     );
+
+    if (cleanLeadTarget) {
+      persistLeadToDb(cleanLeadTarget, nextDecisionMakers, nextDiscoveries, nextRuns, freshAI, checkLogs, nextConflicts);
+    }
   };
 
+  // ENGINE: ORCHESTRATE MAX ENRICHMENT SYSTEM
   // ENGINE: ORCHESTRATE MAX ENRICHMENT SYSTEM
   const handleTriggerEnrichMax = async (reRunAll: boolean) => {
     const activeLead = getActiveLead();
     if (!activeLead || isEnriching) return;
 
+    const targetLead = { ...activeLead };
+    setEnrichingLeadInfo({ id: targetLead.id, name: targetLead.nomeFantasia || targetLead.razaoSocial || 'Lead' });
+
     if (reRunAll) {
       // Clean slate all previous states of this lead to prevent "ghosts" from older analysis
-      setDiscoveries(prev => prev.filter(d => d.leadId !== activeLead.id));
-      setDecisionMakers(prev => prev.filter(dm => dm.leadId !== activeLead.id));
-      setRuns(prev => prev.filter(r => r.leadId !== activeLead.id));
-      setConflicts(prev => prev.filter(c => c.leadId !== activeLead.id));
-      setLogs(prev => prev.filter(l => l.leadId !== activeLead.id));
+      setDiscoveries(prev => prev.filter(d => d.leadId !== targetLead.id));
+      setDecisionMakers(prev => prev.filter(dm => dm.leadId !== targetLead.id));
+      setRuns(prev => prev.filter(r => r.leadId !== targetLead.id));
+      setConflicts(prev => prev.filter(c => c.leadId !== targetLead.id));
+      setLogs(prev => prev.filter(l => l.leadId !== targetLead.id));
       setAiAnalysis(prev => {
         const fresh = { ...prev };
-        delete fresh[activeLead.id];
+        delete fresh[targetLead.id];
         return fresh;
       });
     }
 
     addLogLocal(reRunAll ? "⚡ Reiniciando e Iniciando Cadeia de Orquestração Máxima B2B..." : "⚡ Iniciando Cadeia de Orquestração Máxima B2B...", "info");
-    setActiveTab(0);
 
     // Define sequential list of crucial buttons in Level 1, 2, 3 and 4 order
     const pipeline = [
@@ -1314,7 +1506,7 @@ export default function App() {
     ];
 
     // Filter pipeline depending on user criteria (reRunAll vs. gaps only)
-    const executedButtonIds = runs.filter(r => r.leadId === activeLead.id).map(r => r.buttonId);
+    const executedButtonIds = runs.filter(r => r.leadId === targetLead.id).map(r => r.buttonId);
     const targetSteps = reRunAll 
       ? pipeline 
       : pipeline.filter(step => !executedButtonIds.includes(step));
@@ -1322,6 +1514,7 @@ export default function App() {
     if (targetSteps.length === 0) {
       addLogLocal("★ Todas as etapas de enriquecimento já foram concluídas para este lead!", "success");
       setRecentReport("Todas as etapas já estavam executadas para este lead B2B.");
+      setEnrichingLeadInfo(null);
       return;
     }
 
@@ -1348,9 +1541,9 @@ export default function App() {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              lead: activeLead,
+              lead: targetLead,
               buttonId: stepButtonId,
-              currentDiscoveries: discoveries.filter(d => d.leadId === activeLead.id)
+              currentDiscoveries: discoveries.filter(d => d.leadId === targetLead.id)
             })
           }),
           'POST'
@@ -1363,7 +1556,7 @@ export default function App() {
 
           // Merge returned enriched lead info back into client state list
           if (info.lead) {
-            setLeads(prev => prev.map(l => l.id === activeLead.id ? { ...l, ...info.lead } : l));
+            setLeads(prev => prev.map(l => l.id === targetLead.id ? { ...l, ...info.lead } : l));
           }
 
           // Append run info
@@ -1372,7 +1565,7 @@ export default function App() {
           // Process and prevent duplication in discoveries across ALL leads
           setDiscoveries(prev => {
             const incomingFields = (info.newDiscoveries || []).map((d: any) => d.field);
-            const listOld = prev.filter(d => d.leadId !== activeLead.id || !incomingFields.includes(d.field));
+            const listOld = prev.filter(d => d.leadId !== targetLead.id || !incomingFields.includes(d.field));
             return [...listOld, ...(info.newDiscoveries || [])];
           });
 
@@ -1382,28 +1575,22 @@ export default function App() {
           // Append decision makers
           if (info.decisionMakers && info.decisionMakers.length > 0) {
             setDecisionMakers(prev => {
-              // Keep decision makers of other leads untouched
-              const others = prev.filter(dm => dm.leadId !== activeLead.id);
-              
-              // Get current of active lead
-              const currentLeadDMs = prev.filter(dm => dm.leadId === activeLead.id);
-              
-              // Filter out incoming that already exist by name
+              const others = prev.filter(dm => dm.leadId !== targetLead.id);
+              const currentLeadDMs = prev.filter(dm => dm.leadId === targetLead.id);
               const incoming = (info.decisionMakers || []).filter((inDM: any) => {
                 return !currentLeadDMs.some(c => c.name.toLowerCase() === inDM.name.toLowerCase());
               });
-              
               return [...others, ...currentLeadDMs, ...incoming];
             });
           }
 
           // Append AI analysis scores and technical dossier logs
           setAiAnalysis(prev => {
-            const currentActiveDisc = discoveries.filter(d => d.leadId === activeLead.id);
+            const currentActiveDisc = discoveries.filter(d => d.leadId === targetLead.id);
             const mergedDisc = [...currentActiveDisc.filter(d => !info.newDiscoveries?.some((nd: any) => nd.field === d.field)), ...(info.newDiscoveries || [])];
-            const nextLuxuryEval = calculateLuxuryScore(activeLead, mergedDisc);
+            const nextLuxuryEval = calculateLuxuryScore(targetLead, mergedDisc);
             
-            const prevDossier = prev[activeLead.id]?.apiDossier || "";
+            const prevDossier = prev[targetLead.id]?.apiDossier || "";
             const freshEntry = renderDossierEntry(
               info.run?.buttonName || getButtonLabel(stepButtonId), 
               info.run, 
@@ -1415,9 +1602,9 @@ export default function App() {
 
             return {
               ...prev,
-              [activeLead.id]: {
-                id: prev[activeLead.id]?.id || 'ana_' + Math.random().toString(36).substring(2, 9),
-                leadId: activeLead.id,
+              [targetLead.id]: {
+                id: prev[targetLead.id]?.id || 'ana_' + Math.random().toString(36).substring(2, 9),
+                leadId: targetLead.id,
                 icpScore: info.aiAnalysis?.icpScore ?? 80,
                 purchasePotential: info.aiAnalysis?.purchasePotential ?? 85,
                 luxuryProfile: nextLuxuryEval.isPremium,
@@ -1438,21 +1625,26 @@ export default function App() {
         console.warn(`Encountered handled delay or restriction at step ${stepButtonId}:`, err);
       }
 
-      // Mandatory 3-second delay between API calls to prevent rate limits
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // 2.5-second delay between API calls to prevent rate limits
+      await new Promise(resolve => setTimeout(resolve, 2500));
     }
 
     setIsEnriching(false);
+    setEnrichingLeadInfo(null);
     setCurrentActiveButton(null);
     setEnrichmentProgress(0);
 
     // Conclude and build massive executive summary report
     addLogLocal(`⚡ ORQUESTRAÇÃO MÁXIMA CONCLUÍDA! Custos totais debitados: R$ ${cumulativeCost.toFixed(2)}. ${newDiscoveriesCounter} registros catalogados.`, "success");
     
+    // Auto-sync full state to Neon
+    const finalSavedLead = leads.find(l => l.id === targetLead.id) || targetLead;
+    persistLeadToDb(finalSavedLead, decisionMakers, discoveries, runs, aiAnalysis, logs, conflicts);
+
     setRecentReport(`
 --- RELATÓRIO EXECUTIVO DE ORQUESTRAÇÃO MÁXIMA B2B ---
 - Data de Processamento: ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString()}
-- Passos executaos com sucesso: ${targetSteps.length} APIs/Fontes
+- Passos executados com sucesso: ${targetSteps.length} APIs/Fontes
 - Tempo de Coleta Cumulativa: ${cumulativeDuration} ms
 - Custo Consolidado Debitado: R$ ${cumulativeCost.toFixed(2)}
 - Novas informações ricas estruturadas: ${newDiscoveriesCounter} descobertas
@@ -1668,21 +1860,49 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans antialiased pb-12">
-      {/* 200x200px Centered Research Overlay Banner (Black 50% opacity, Large Blue Bold %) */}
+      {/* Background Floating Research Widget (Fixed Bottom-Right, Non-blocking, Clickable everywhere else) */}
       {isEnriching && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm pointer-events-auto">
-          <div className="w-[200px] h-[200px] bg-black/80 rounded-3xl border border-blue-500/50 shadow-2xl flex flex-col items-center justify-center p-4 text-center space-y-2 animate-pulse">
-            <div className="text-5xl font-black text-blue-500 tracking-tighter drop-shadow-[0_0_15px_rgba(59,130,246,0.5)] font-mono">
-              {enrichmentProgress}%
+        <div className="fixed bottom-5 right-5 z-50 pointer-events-none animate-in slide-in-from-bottom-5 duration-300">
+          <div className="pointer-events-auto w-[320px] bg-slate-950/95 backdrop-blur-md rounded-2xl border border-blue-500/50 shadow-2xl p-4 text-slate-100 space-y-3 ring-1 ring-blue-500/20">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="h-2.5 w-2.5 rounded-full bg-blue-500 animate-ping"></div>
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-400 font-mono">
+                  Pesquisando em 2º Plano
+                </span>
+              </div>
+              <span className="text-2xl font-black font-mono text-blue-400 drop-shadow-[0_0_10px_rgba(59,130,246,0.5)]">
+                {enrichmentProgress}%
+              </span>
             </div>
-            <span className="text-[11px] font-bold text-blue-400 uppercase tracking-widest leading-tight">
-              Pesquisando Lead...
-            </span>
-            <div className="w-28 bg-slate-900 rounded-full h-2 overflow-hidden mt-1 border border-blue-500/40">
+
+            <div className="space-y-1">
+              <div className="text-xs font-bold text-white truncate flex items-center justify-between gap-1">
+                <span className="truncate">{enrichingLeadInfo?.name || 'Lead em Pesquisa'}</span>
+                {enrichingLeadInfo?.id && selectedLeadId !== enrichingLeadInfo.id && (
+                  <button
+                    onClick={() => setSelectedLeadId(enrichingLeadInfo.id)}
+                    className="text-[9px] text-blue-300 hover:text-white bg-blue-600/30 hover:bg-blue-600/60 px-2 py-0.5 rounded border border-blue-500/30 font-sans cursor-pointer transition-all shrink-0 ml-1.5"
+                  >
+                    Ver Lead
+                  </button>
+                )}
+              </div>
+              <p className="text-[10px] text-slate-400 truncate">
+                {currentActiveButton ? `Etapa: ${getButtonLabel(currentActiveButton)}` : 'Coletando fontes multicanal...'}
+              </p>
+            </div>
+
+            <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-blue-500/30">
               <div 
                 className="bg-gradient-to-r from-blue-600 via-blue-500 to-cyan-400 h-full transition-all duration-300 ease-out shadow-sm shadow-blue-500" 
                 style={{ width: `${enrichmentProgress}%` }}
               ></div>
+            </div>
+
+            <div className="flex items-center justify-between text-[9px] text-slate-400 italic pt-0.5 border-t border-slate-900">
+              <span>✓ Navegação livre destravada</span>
+              <span className="text-emerald-400 font-medium">Auto-Sync Neon</span>
             </div>
           </div>
         </div>
@@ -1710,15 +1930,43 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4 bg-slate-800/40 p-2 rounded-xl border border-slate-800 self-start">
-            <div className="text-right font-mono">
-              <span className="text-[9px] text-slate-500 block font-bold">SALDO ADICIONAL CRM CONECTORES</span>
-              <span className="text-sm font-extrabold text-white">450 Créditos</span>
+          <div className="flex items-center gap-3 self-start flex-wrap">
+            {/* Neon PostgreSQL Database Real-Time Cloud Status Badge */}
+            <div className="flex items-center gap-2.5 bg-slate-800/60 p-2 px-3 rounded-xl border border-slate-700/60 shadow-inner">
+              <div className="p-1.5 bg-indigo-500/20 rounded-lg text-indigo-400">
+                <Database className="h-4 w-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className={`h-2 w-2 rounded-full ${dbConnected ? 'bg-emerald-400' : 'bg-amber-400'} ${isDbSyncing ? 'animate-ping' : ''}`}></span>
+                  <span className="text-[10px] font-bold tracking-tight text-white">
+                    {isDbSyncing ? 'Sincronizando...' : (dbConnected ? 'Neon Cloud Sincronizado' : 'Modo Offline')}
+                  </span>
+                </div>
+                <span className="text-[9px] text-slate-400 block font-mono">
+                  {lastDbSyncTime ? `Último sync: ${lastDbSyncTime}` : 'Nuvem Conectada'}
+                </span>
+              </div>
+              <button
+                onClick={() => syncWithDatabase(false)}
+                disabled={isDbSyncing}
+                title="Sincronizar com outros computadores agora"
+                className="p-1.5 hover:bg-slate-700 rounded-lg text-slate-300 hover:text-white transition-all cursor-pointer disabled:opacity-50 active:scale-95"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isDbSyncing ? 'animate-spin text-indigo-400' : ''}`} />
+              </button>
             </div>
-            <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-1 rounded-lg border border-emerald-500/30 flex items-center gap-1 shrink-0">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-              Plano Ativo
-            </span>
+
+            <div className="flex items-center gap-4 bg-slate-800/40 p-2 rounded-xl border border-slate-800">
+              <div className="text-right font-mono">
+                <span className="text-[9px] text-slate-500 block font-bold">SALDO ADICIONAL CRM CONECTORES</span>
+                <span className="text-sm font-extrabold text-white">450 Créditos</span>
+              </div>
+              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-1 rounded-lg border border-emerald-500/30 flex items-center gap-1 shrink-0">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                Plano Ativo
+              </span>
+            </div>
           </div>
         </div>
       </header>
@@ -2018,18 +2266,31 @@ export default function App() {
                         <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></div>
                         <span className="text-[11px] text-slate-400 font-sans">Dossiê técnico do robô salvo na ficha deste Lead.</span>
                       </div>
-                      <button
-                        onClick={() => {
-                          setActiveTab(5);
-                          setTimeout(() => {
-                            const el = document.getElementById("api-dossier-tab-header");
-                            if (el) el.scrollIntoView({ behavior: 'smooth' });
-                          }, 100);
-                        }}
-                        className="px-3 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/30 border border-emerald-500/30 hover:border-emerald-500/60 rounded text-emerald-300 hover:text-emerald-100 text-[11px] font-bold font-sans transition-all flex items-center gap-1.5"
-                      >
-                        📡 Acessar Dossiê de Integração & APIs
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setActiveTab(5);
+                            setTimeout(() => {
+                              window.scrollTo({ top: 400, behavior: 'smooth' });
+                            }, 100);
+                          }}
+                          className="px-3 py-1.5 bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 hover:border-indigo-500/70 rounded text-indigo-200 hover:text-white text-[11px] font-bold font-sans transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        >
+                          📋 Dossiê Pré-Abordagem (Vendedor)
+                        </button>
+                        <button
+                          onClick={() => {
+                            setActiveTab(7);
+                            setTimeout(() => {
+                              const el = document.getElementById("api-dossier-tab-header");
+                              if (el) el.scrollIntoView({ behavior: 'smooth' });
+                            }, 100);
+                          }}
+                          className="px-3 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/30 border border-emerald-500/30 hover:border-emerald-500/60 rounded text-emerald-300 hover:text-emerald-100 text-[11px] font-bold font-sans transition-all flex items-center gap-1.5 cursor-pointer"
+                        >
+                          📡 Dossiê de Integração & APIs
+                        </button>
+                      </div>
                     </div>
 
                     <p className="text-[11px] text-slate-400 leading-snug italic">
@@ -2047,6 +2308,7 @@ export default function App() {
                       "decisores",
                       "vagas",
                       "playbook",
+                      "dossiê vendedor",
                       "metricas",
                       "dossiê API",
                       "campos"
@@ -2058,13 +2320,20 @@ export default function App() {
                         className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all shrink-0 ${
                           activeTab === idx
                             ? 'bg-slate-800 text-white shadow'
-                            : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                            : idx === 5
+                              ? 'text-indigo-600 bg-indigo-50/60 hover:bg-indigo-100/80 font-extrabold'
+                              : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
                         }`}
                       >
                         {label}
                         {idx === 1 && leadConflicts.filter(c => c.status === 'Pendente').length > 0 && (
                           <span className="ml-1 bg-rose-500 text-white rounded-full text-[9px] px-1.5 py-0.5 animate-pulse">
                             {leadConflicts.filter(c => c.status === 'Pendente').length}
+                          </span>
+                        )}
+                        {idx === 5 && (
+                          <span className="ml-1 bg-indigo-600 text-white text-[9px] px-1.5 py-0.5 rounded-full font-bold">
+                            NOVO
                           </span>
                         )}
                       </button>
@@ -2121,13 +2390,23 @@ export default function App() {
                     )}
 
                     {activeTab === 5 && (
+                      <DossieVendedor
+                        lead={activeLead}
+                        aiAnalysis={activeLeadAI}
+                        decisionMakers={leadDMs}
+                        discoveries={leadDiscoveries}
+                        onUpdateDossie={handleUpdateDossie}
+                      />
+                    )}
+
+                    {activeTab === 6 && (
                       <RunsHistory
                         runs={activeLeadRuns}
                         history={history.filter(h => h.leadId === activeLead.id)}
                       />
                     )}
 
-                    {activeTab === 6 && (
+                    {activeTab === 7 && (
                       <div className="space-y-6" id="api-dossier-tab-header">
                         {/* People Data Labs Credit Consumption Monitor Card */}
                         <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-slate-300 space-y-4 shadow-md">
@@ -2560,7 +2839,7 @@ HUNTER_API_KEY=sua_chave_hunter_aqui`}
                       </div>
                     )}
 
-                    {activeTab === 7 && (
+                    {activeTab === 8 && (
                       <FieldsList
                         lead={activeLead}
                         discoveries={leadDiscoveries}
