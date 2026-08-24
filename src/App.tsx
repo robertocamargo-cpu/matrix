@@ -946,176 +946,134 @@ export default function App() {
       // Update PDL credits balance immediately
       fetchPdlCredits();
 
-      // We have new results! Process discoveries, runs, logs and decision makers
+      // We have new results! Process discoveries, runs, logs and decision makers atomically
       setTimeout(() => {
         setIsEnriching(false);
         setEnrichingLeadInfo(null);
         setCurrentActiveButton(null);
 
-        // Process logs
-        const nextLogs = [...logs, ...(info.logs || [])];
-        setLogs(nextLogs);
+        // 1. Process logs
+        const newLogsToAdd = info.logs || [];
+        setLogs(prevLogs => [...prevLogs, ...newLogsToAdd]);
 
-        // Process runs
-        const nextRuns = [info.run, ...baseRuns];
-        setRuns(nextRuns);
-
-        // Process discoveries (detecting conflicts before writing)
-        const oldDiscForLead = baseDiscoveries.filter(d => d.leadId === activeLead.id);
-        const newD: LeadDiscovery[] = [];
-        const nextConflicts = [...baseConflicts];
-
-        const idsToRemove: string[] = [];
-
-        if (info.newDiscoveries) {
-          info.newDiscoveries.forEach((incoming: LeadDiscovery) => {
-            // Find if field already has a discovery
-            const match = oldDiscForLead.find(d => d.field === incoming.field);
-            if (match) {
-              // Check if values differ (Conflict Detection)
-              if (match.cleanValue !== incoming.cleanValue && match.status === 'Confirmado') {
-                // We active-conflict!
-                incoming.status = 'Conflitante';
-                
-                const existingConflict = nextConflicts.find(c => c.field === incoming.field && c.leadId === activeLead.id && c.status === 'Pendente');
-                if (!existingConflict) {
-                  nextConflicts.push({
-                    id: 'conf_' + Math.random().toString(36).substring(2, 9),
-                    leadId: activeLead.id,
-                    field: incoming.field,
-                    fieldLabel: incoming.fieldLabel,
-                    currentValue: match.cleanValue,
-                    valueA: match.cleanValue,
-                    sourceA: match.sourceName,
-                    valueB: incoming.cleanValue,
-                    sourceB: incoming.sourceName,
-                    status: 'Pendente'
-                  });
-                  // Appending conflict warning log
-                  nextLogs.push({
-                    id: 'log_' + Math.random().toString(36).substring(2, 9),
-                    leadId: activeLead.id,
-                    message: `⚠️ Conflito de integridade detectado no campo "${incoming.fieldLabel}"! Fonte ${match.sourceName} possui valor diferente de ${incoming.sourceName}.`,
-                    type: 'warn',
-                    timestamp: new Date().toLocaleTimeString()
-                  });
-                }
-              } else {
-                // If previous wasn't confirmed or we are re-scraping the field, make a clean overwrite and remove stale candidate reference
-                idsToRemove.push(match.id);
-              }
-            }
-            newD.push(incoming);
+        // 2. Process runs
+        let updatedRunsList = runs;
+        if (info.run) {
+          setRuns(prevRuns => {
+            updatedRunsList = [info.run, ...prevRuns.filter(r => r.id !== info.run.id)];
+            return updatedRunsList;
           });
         }
 
-        const filteredDiscoveries = baseDiscoveries.filter(d => !idsToRemove.includes(d.id));
-        const nextDiscoveries = [...filteredDiscoveries, ...newD];
-        setDiscoveries(nextDiscoveries);
-
-        // Process decision makers (preventing crossover and duplication)
-        const othersDMs = baseDMs.filter(dm => dm.leadId !== activeLead.id);
-        const activeLeadDMs = baseDMs.filter(dm => dm.leadId === activeLead.id);
-        const incomingDMs = (info.decisionMakers || []).filter((inDM: any) => {
-          return !activeLeadDMs.some(c => c.name.toLowerCase() === inDM.name.toLowerCase());
+        // 3. Process discoveries (guarantee all returned discoveries are saved and visible!)
+        const incomingDisc: LeadDiscovery[] = info.newDiscoveries || [];
+        let updatedDiscoveriesList = discoveries;
+        
+        setDiscoveries(prevDisc => {
+          const incomingFields = incomingDisc.map(d => d.field);
+          // Remove old items with the same field for THIS target lead
+          const existingOthers = prevDisc.filter(d => d.leadId !== targetLead.id || !incomingFields.includes(d.field));
+          updatedDiscoveriesList = [...existingOthers, ...incomingDisc];
+          return updatedDiscoveriesList;
         });
-        const nextDMs = [...othersDMs, ...activeLeadDMs, ...incomingDMs];
-        setDecisionMakers(nextDMs);
 
-        // Append to dynamic technical dossier
-        const prevDossier = aiAnalysis[activeLead.id]?.apiDossier || "";
-        const dossierEntry = renderDossierEntry(
-          info.run?.buttonName || getButtonLabel(buttonId), 
-          info.run, 
-          info.logs || [], 
-          info.sources || [], 
-          info.newDiscoveries || []
-        );
-        const nextDossier = prevDossier + dossierEntry;
+        // 4. Process decision makers
+        const incomingDMs: LeadDecisionMaker[] = info.decisionMakers || [];
+        let updatedDMsList = decisionMakers;
+        setDecisionMakers(prevDMs => {
+          const others = prevDMs.filter(dm => dm.leadId !== targetLead.id);
+          const currentForLead = prevDMs.filter(dm => dm.leadId === targetLead.id);
+          const newUnique = incomingDMs.filter(inDM => 
+            !currentForLead.some(c => c.name.toLowerCase().trim() === inDM.name.toLowerCase().trim())
+          );
+          updatedDMsList = [...others, ...currentForLead, ...newUnique];
+          return updatedDMsList;
+        });
 
-        // Update AI strategic scores associated with the lead
-        const nextLuxuryEval = calculateLuxuryScore(activeLead, nextDiscoveries);
-        const nextAI = {
-          ...aiAnalysis,
-          [activeLead.id]: {
-            id: aiAnalysis[activeLead.id]?.id || 'ana_' + Math.random().toString(36).substring(2, 9),
-            leadId: activeLead.id,
-            icpScore: info.aiAnalysis?.icpScore ?? 75,
-            purchasePotential: info.aiAnalysis?.purchasePotential ?? 75,
-            luxuryProfile: nextLuxuryEval.isPremium,
-            luxuryScore: nextLuxuryEval.score,
-            luxuryFactors: nextLuxuryEval.factors,
-            priority: info.aiAnalysis?.priority ?? 'Média',
-            justification: info.aiAnalysis?.justification ?? '',
-            risk: info.aiAnalysis?.risk ?? '',
-            playbook: info.aiAnalysis?.playbook ?? { whatsapp: '', email: '', ligacao: '', objecoes: [], produtosIndicados: [] },
-            date: new Date().toISOString().split('T')[0],
-            time: new Date().toLocaleTimeString(),
-            apiDossier: nextDossier
-          }
-        };
-        setAiAnalysis(nextAI);
+        // 5. Append AI analysis scores and technical dossier logs
+        let updatedAiMap = { ...aiAnalysis };
+        setAiAnalysis(prevAI => {
+          const prevDossier = prevAI[targetLead.id]?.apiDossier || "";
+          const dossierEntry = renderDossierEntry(
+            info.run?.buttonName || getButtonLabel(buttonId), 
+            info.run, 
+            info.logs || [], 
+            info.sources || [], 
+            incomingDisc
+          );
+          const nextDossier = prevDossier + dossierEntry;
+          const currentLeadDisc = updatedDiscoveriesList.filter(d => d.leadId === targetLead.id);
+          const nextLuxuryEval = calculateLuxuryScore(targetLead, currentLeadDisc.length > 0 ? currentLeadDisc : incomingDisc);
 
-        // Auto-populate empty primary fields on the lead using the new discoveries
+          updatedAiMap = {
+            ...prevAI,
+            [targetLead.id]: {
+              id: prevAI[targetLead.id]?.id || 'ana_' + Math.random().toString(36).substring(2, 9),
+              leadId: targetLead.id,
+              icpScore: info.aiAnalysis?.icpScore ?? 80,
+              purchasePotential: info.aiAnalysis?.purchasePotential ?? 75,
+              luxuryProfile: nextLuxuryEval.isPremium,
+              luxuryScore: nextLuxuryEval.score,
+              luxuryFactors: nextLuxuryEval.factors,
+              priority: info.aiAnalysis?.priority ?? 'Média',
+              justification: info.aiAnalysis?.justification ?? '',
+              risk: info.aiAnalysis?.risk ?? '',
+              playbook: info.aiAnalysis?.playbook ?? { whatsapp: '', email: '', ligacao: '', objecoes: [], produtosIndicados: [] },
+              date: new Date().toISOString().split('T')[0],
+              time: new Date().toLocaleTimeString(),
+              apiDossier: nextDossier,
+              dossieTexto: info.aiAnalysis?.dossieTexto || prevAI[targetLead.id]?.dossieTexto
+            }
+          };
+          return updatedAiMap;
+        });
+
+        // 6. Auto-populate empty primary fields on the target lead
         const updatedFields: Partial<Lead> = {};
-        if (info.newDiscoveries) {
-          info.newDiscoveries.forEach((disc: any) => {
-            if (disc.field === "nomeFantasia" && (!activeLead.nomeFantasia || activeLead.nomeFantasia === "Nenhum")) {
+        if (incomingDisc.length > 0) {
+          incomingDisc.forEach(disc => {
+            if (disc.field === "nomeFantasia" && (!targetLead.nomeFantasia || targetLead.nomeFantasia === "Nenhum")) {
               updatedFields.nomeFantasia = disc.cleanValue;
             }
-            if (disc.field === "razaoSocial" && (!activeLead.razaoSocial || activeLead.razaoSocial === "Nenhuma")) {
+            if (disc.field === "razaoSocial" && (!targetLead.razaoSocial || targetLead.razaoSocial === "Nenhuma")) {
               updatedFields.razaoSocial = disc.cleanValue;
             }
-            if (disc.field === "site" && (!activeLead.site || activeLead.site === "Não cadastrado")) {
+            if (disc.field === "site" && (!targetLead.site || targetLead.site === "Não cadastrado")) {
               updatedFields.site = disc.cleanValue;
             }
-            if (disc.field === "email" && (!activeLead.email || activeLead.email === "Não informado")) {
+            if (disc.field === "email" && (!targetLead.email || targetLead.email === "Não informado")) {
               updatedFields.email = disc.cleanValue;
             }
-            if (disc.field === "cidade" && (!activeLead.cidade || activeLead.cidade === "Não informada")) {
+            if (disc.field === "cidade" && (!targetLead.cidade || targetLead.cidade === "Não informada")) {
               updatedFields.cidade = disc.cleanValue;
             }
-            if (disc.field === "estado" && (!activeLead.estado || activeLead.estado === "UF")) {
+            if (disc.field === "estado" && (!targetLead.estado || targetLead.estado === "UF")) {
               updatedFields.estado = disc.cleanValue;
             }
           });
         }
 
-        const nextLeads = leads.map(l => {
-          if (l.id === activeLead.id) {
-            return {
-              ...l,
-              ...(info.lead || {}),
-              ...updatedFields
-            };
-          }
-          return l;
-        });
-        setLeads(nextLeads);
-
-        // Log of completion
-        nextLogs.push({
-          id: 'log_' + Math.random().toString(36).substring(2, 9),
-          leadId: activeLead.id,
-          message: `✓ Etapa "${info.run?.buttonName || getButtonLabel(buttonId)}" concluída com sucesso. Localizado ${info.newDiscoveries?.length || 0} novas descobertas.`,
-          type: 'success',
-          timestamp: new Date().toLocaleTimeString()
+        let updatedLeadsList = [...leads];
+        setLeads(prevLeads => {
+          updatedLeadsList = prevLeads.map(l => {
+            if (l.id === targetLead.id) {
+              return { ...l, ...(info.lead || {}), ...updatedFields };
+            }
+            return l;
+          });
+          return updatedLeadsList;
         });
 
-        setConflicts(nextConflicts);
-        saveState(nextLeads, activeLead.id, nextRuns, nextDiscoveries, nextDMs, nextAI, nextLogs, history, nextConflicts);
+        // 7. Save state to localStorage and persist to Neon PostgreSQL
+        const targetSavedLead = updatedLeadsList.find(l => l.id === targetLead.id) || { ...targetLead, ...updatedFields };
+        saveState(updatedLeadsList, targetLead.id, updatedRunsList, updatedDiscoveriesList, updatedDMsList, updatedAiMap, logs, history, conflicts);
+        persistLeadToDb(targetSavedLead, updatedDMsList, updatedDiscoveriesList, updatedRunsList, updatedAiMap, logs, conflicts);
 
         // If Executive Report tier was executed, immediately open the on-screen Executive Report Modal
         if (buttonId === 'btn-tier-4-executive-report' || buttonId === 'executive-report') {
           setIsExecutiveModalOpen(true);
         }
-
-        // Auto-sync enriched lead data to Neon PostgreSQL Database
-        const currentSavedLead = nextLeads.find(l => l.id === activeLead.id);
-        if (currentSavedLead) {
-          persistLeadToDb(currentSavedLead, nextDMs, nextDiscoveries, nextRuns, nextAI, history, nextConflicts);
-        }
-      }, 300);
+      }, 150);
 
     } catch (e: any) {
       clearInterval(interval);

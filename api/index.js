@@ -335,8 +335,8 @@ async function waitForGeminiRateLimit() {
   return geminiQueuePromise;
 }
 async function generateContentWithResilience(ai, primaryModel, params, maxRetries = 2) {
-  const candidateModels = [primaryModel, "gemini-3.7-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
-  const uniqueModels = [...new Set(candidateModels)].filter((m) => m !== "gemini-2.5-flash");
+  const candidateModels = [primaryModel, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"];
+  const uniqueModels = [...new Set(candidateModels)];
   let lastError = null;
   for (const model of uniqueModels) {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
