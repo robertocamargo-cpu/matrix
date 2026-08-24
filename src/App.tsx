@@ -23,7 +23,7 @@ import {
   Building2, TrendingUp, Sparkles, ShieldAlert,
   HelpCircle, CheckCircle, FileText, Landmark, Zap,
   Key, AlertTriangle, Cpu, ExternalLink, Layers,
-  FileDown, Copy, MessageSquare,
+  FileDown, Copy, MessageSquare, Briefcase,
   Sliders, ShieldCheck, RefreshCw, Clock, Globe, Wifi, X
 } from 'lucide-react';
 
@@ -2722,48 +2722,70 @@ HUNTER_API_KEY=sua_chave_hunter_aqui`}
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 text-xs">
                   <div>
                     <span className="text-[10px] font-bold text-slate-400 uppercase">Razão Social</span>
-                    <p className="font-extrabold text-slate-900 text-sm mt-0.5">{activeLead.razaoSocial || activeLead.razaoSocialOficial || 'Não informada'}</p>
+                    <p className="font-extrabold text-slate-900 text-sm mt-0.5">
+                      {activeLead.razaoSocial || activeLead.razaoSocialOficial || leadDiscoveries.find(d => d.field?.toLowerCase().includes('razao'))?.cleanValue || 'Não informada'}
+                    </p>
                   </div>
                   <div>
                     <span className="text-[10px] font-bold text-slate-400 uppercase">Nome Fantasia</span>
-                    <p className="font-extrabold text-slate-900 text-sm mt-0.5">{activeLead.nomeFantasia || activeLead.nomeFantasiaOficial || 'Não informado'}</p>
+                    <p className="font-extrabold text-slate-900 text-sm mt-0.5">
+                      {activeLead.nomeFantasia || activeLead.nomeFantasiaOficial || leadDiscoveries.find(d => d.field?.toLowerCase().includes('fantasia'))?.cleanValue || 'Não informado'}
+                    </p>
                   </div>
                   <div>
                     <span className="text-[10px] font-bold text-slate-400 uppercase">CNPJ Oficial</span>
-                    <p className="font-mono font-extrabold text-indigo-700 text-sm mt-0.5">{activeLead.cnpj || activeLead.cnpjOficial || 'Não informado'}</p>
+                    <p className="font-mono font-extrabold text-indigo-700 text-sm mt-0.5">
+                      {activeLead.cnpj || activeLead.cnpjOficial || leadDiscoveries.find(d => d.field?.toLowerCase().includes('cnpj'))?.cleanValue || 'Não informado'}
+                    </p>
                   </div>
                   <div>
                     <span className="text-[10px] font-bold text-slate-400 uppercase">CNAE Principal</span>
-                    <p className="font-mono text-slate-800 mt-0.5">{activeLead.cnaePrincipal || '55.10-8-01 - Hotéis / Hospitalidade'}</p>
+                    <p className="font-mono text-slate-800 mt-0.5">
+                      {activeLead.cnaePrincipal || leadDiscoveries.find(d => d.field?.toLowerCase().includes('cnae'))?.cleanValue || '55.10-8-01 - Hotéis / Hospitalidade'}
+                    </p>
                   </div>
                   <div>
                     <span className="text-[10px] font-bold text-slate-400 uppercase">Capital Social</span>
-                    <p className="font-bold text-emerald-700 mt-0.5">{activeLead.capitalSocial || activeLead.capitalSocialOficial || 'R$ 500.000,00'}</p>
+                    <p className="font-bold text-emerald-700 mt-0.5">
+                      {activeLead.capitalSocial || activeLead.capitalSocialOficial || leadDiscoveries.find(d => d.field?.toLowerCase().includes('capital'))?.cleanValue || 'R$ 500.000,00'}
+                    </p>
                   </div>
                   <div>
                     <span className="text-[10px] font-bold text-slate-400 uppercase">Situação Cadastral</span>
-                    <p className="font-bold text-emerald-600 mt-0.5">● {activeLead.situacaoOficial || 'ATIVA (Receita Federal)'}</p>
+                    <p className="font-bold text-emerald-600 mt-0.5">
+                      ● {activeLead.situacaoOficial || leadDiscoveries.find(d => d.field?.toLowerCase().includes('situacao'))?.cleanValue || 'ATIVA (Receita Federal)'}
+                    </p>
                   </div>
                   <div className="sm:col-span-2">
                     <span className="text-[10px] font-bold text-slate-400 uppercase">Endereço Oficial</span>
-                    <p className="text-slate-800 mt-0.5 font-medium">{activeLead.enderecoOficial || `${activeLead.cidade || 'São Paulo'} - ${activeLead.estado || 'SP'}`}</p>
+                    <p className="text-slate-800 mt-0.5 font-medium">
+                      {activeLead.enderecoOficial || leadDiscoveries.find(d => d.field?.toLowerCase().includes('endereco') || d.field?.toLowerCase().includes('logradouro'))?.cleanValue || `${activeLead.cidade || 'São Paulo'} - ${activeLead.estado || 'SP'}`}
+                    </p>
                   </div>
                   <div>
                     <span className="text-[10px] font-bold text-slate-400 uppercase">Website / Domínio</span>
-                    <p className="font-mono text-indigo-600 mt-0.5 font-bold truncate">{activeLead.site || 'Não cadastrado'}</p>
+                    <p className="font-mono text-indigo-600 mt-0.5 font-bold truncate">
+                      {activeLead.site || leadDiscoveries.find(d => d.field?.toLowerCase().includes('site'))?.cleanValue || 'Não cadastrado'}
+                    </p>
                   </div>
                 </div>
 
                 {/* Sócios QSA */}
-                {activeLead.sociosOficial && activeLead.sociosOficial.length > 0 && (
+                {((activeLead.sociosOficial && activeLead.sociosOficial.length > 0) || leadDiscoveries.find(d => d.field?.toLowerCase().includes('socio') || d.field?.toLowerCase().includes('qsa'))) && (
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 mt-2">
                     <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Quadro de Sócios e Administradores (QSA Oficial):</span>
                     <div className="flex flex-wrap gap-2 mt-1.5">
-                      {activeLead.sociosOficial.map((socio, idx) => (
-                        <span key={idx} className="bg-white border border-slate-200 text-slate-800 px-2.5 py-1 rounded-lg text-xs font-bold shadow-2xs">
-                          👤 {socio}
+                      {activeLead.sociosOficial && activeLead.sociosOficial.length > 0 ? (
+                        activeLead.sociosOficial.map((socio, idx) => (
+                          <span key={idx} className="bg-white border border-slate-200 text-slate-800 px-2.5 py-1 rounded-lg text-xs font-bold shadow-2xs">
+                            👤 {socio}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="bg-white border border-slate-200 text-slate-800 px-2.5 py-1 rounded-lg text-xs font-bold">
+                          👤 {leadDiscoveries.find(d => d.field?.toLowerCase().includes('socio') || d.field?.toLowerCase().includes('qsa'))?.cleanValue}
                         </span>
-                      ))}
+                      )}
                     </div>
                   </div>
                 )}
@@ -2819,7 +2841,7 @@ HUNTER_API_KEY=sua_chave_hunter_aqui`}
                 )}
               </div>
 
-              {/* SECTION 3: COMITÊ DE DECISÃO & MATRIZ NEVINE */}
+              {/* SECTION 3: COMITÊ DE DECISÃO & MATRIZ NEVINE (ORDENADO POR CARGO DECRESCENTE) */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <div className="flex items-center gap-2">
@@ -2829,12 +2851,19 @@ HUNTER_API_KEY=sua_chave_hunter_aqui`}
                     </h4>
                   </div>
                   <span className="text-xs text-slate-500 font-mono">
-                    Ordenação Decrescente de Cargo
+                    ★ Ordenação Decrescente de Cargo & Hierarquia
                   </span>
                 </div>
 
                 <div className="divide-y divide-slate-150 border border-slate-200 rounded-xl overflow-hidden">
-                  {leadDMs.map((dm) => (
+                  {[...leadDMs]
+                    .sort((a, b) => {
+                      const rankA = a.ranking ?? 1;
+                      const rankB = b.ranking ?? 1;
+                      if (rankB !== rankA) return rankB - rankA;
+                      return String(b.role || '').localeCompare(String(a.role || ''));
+                    })
+                    .map((dm) => (
                     <div key={dm.id} className="p-4 bg-white hover:bg-slate-50 transition-colors space-y-2">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
@@ -2842,14 +2871,19 @@ HUNTER_API_KEY=sua_chave_hunter_aqui`}
                             <span className="font-extrabold text-slate-900 text-sm">{dm.name}</span>
                             {dm.isNevineTargetRole && (
                               <span className="text-[9px] bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded border border-amber-200">
-                                ★ Cargo Foco Matriz Nevine
+                                ★ Cargo Foco Matriz Nevine: {dm.nevineCategory || 'Decisor / Influenciador'}
                               </span>
                             )}
                           </div>
                           <p className="text-xs text-slate-600 font-semibold mt-0.5">{dm.role} • {dm.department || 'Geral'}</p>
+                          {dm.nevineKeyMetric && (
+                            <p className="text-[10px] text-amber-800 font-medium mt-0.5">
+                              🎯 Métrica-Chave: {dm.nevineKeyMetric}
+                            </p>
+                          )}
                         </div>
                         <span className="text-[10px] font-mono font-bold px-2.5 py-1 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
-                          {dm.ranking === 5 ? 'Proprietário / CEO' : dm.ranking === 4 ? 'Diretor C-Level' : 'Gerente / Gestor'}
+                          {dm.ranking === 5 ? '★ Nível 5: Proprietário / CEO' : dm.ranking === 4 ? '★ Nível 4: Diretor C-Level' : dm.ranking === 3 ? '★ Nível 3: Gerente Geral / Gestor' : dm.ranking === 2 ? '★ Nível 2: Coordenador / RT' : 'Nível 1: Compras'}
                         </span>
                       </div>
 
@@ -2873,7 +2907,63 @@ HUNTER_API_KEY=sua_chave_hunter_aqui`}
                 </div>
               </div>
 
-              {/* SECTION 4: PLAYBOOKS DE ABORDAGEM IA */}
+              {/* SECTION 4: VAGAS REAIS EM ABERTO & EXPANSÃO */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Briefcase className="h-5 w-5 text-sky-600" />
+                    <h4 className="text-sm font-black text-slate-900 uppercase tracking-wider">
+                      4. Vagas de Emprego Mapeadas & Expansão
+                    </h4>
+                  </div>
+                  <span className="text-xs text-sky-700 bg-sky-50 px-2.5 py-0.5 rounded-full border border-sky-200 font-bold font-mono">
+                    Gupy • LinkedIn Jobs • Portais
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  {(() => {
+                    const vagasFound = leadDiscoveries.filter(d => 
+                      d.field?.toLowerCase().includes('vaga') || 
+                      d.fieldLabel?.toLowerCase().includes('vaga') ||
+                      d.field?.toLowerCase().includes('contrata')
+                    );
+
+                    if (vagasFound.length === 0 && !activeLead.vagasAbertas && !activeLead.vagasOficial) {
+                      return (
+                        <div className="col-span-full py-4 text-center text-slate-400 text-xs italic bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                          Nenhuma vaga ativa indexada no momento. Dispare a etapa "Buscar Crescimento / Vagas" no Nível 3.
+                        </div>
+                      );
+                    }
+
+                    return vagasFound.map((v, i) => (
+                      <div key={i} className="p-3 bg-sky-50/50 rounded-xl border border-sky-100 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-extrabold text-slate-800 text-xs">{v.fieldLabel || 'Vaga em Aberto'}</span>
+                          <span className="text-[9px] bg-sky-100 text-sky-800 font-bold px-2 py-0.5 rounded font-mono">
+                            {v.sourceName || 'Carreiras'}
+                          </span>
+                        </div>
+                        <p className="text-slate-700 font-medium text-xs">{v.cleanValue}</p>
+                        {v.sourceUrl && (
+                          <a 
+                            href={v.sourceUrl} 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="text-[10px] text-sky-600 hover:underline font-bold inline-flex items-center gap-1 pt-1"
+                          >
+                            <span>Acessar Link da Vaga</span>
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        )}
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+
+              {/* SECTION 5: PLAYBOOKS DE ABORDAGEM IA */}
               {activeLeadAI?.playbook && (
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                   <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
