@@ -12,7 +12,7 @@ import dotenv from "dotenv";
 dotenv.config();
 var pool = null;
 function getDbPool() {
-  const connectionString = process.env.POSTGRES_URL || process.env.DATABASE_URL || process.env.POSTGRES_PRISMA_URL || process.env.POSTGRES_URL_NON_POOLING;
+  const connectionString = process.env.mtx_POSTGRES_URL || process.env.mtx_DATABASE_URL || process.env.mtx_POSTGRES_PRISMA_URL || process.env.mtx_DATABASE_URL_UNPOOLED || process.env.POSTGRES_URL || process.env.DATABASE_URL || process.env.POSTGRES_PRISMA_URL || process.env.POSTGRES_URL_NON_POOLING;
   if (!connectionString || connectionString.trim() === "") {
     return null;
   }

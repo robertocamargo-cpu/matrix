@@ -14,6 +14,10 @@ let pool: Pool | null = null;
 
 export function getDbPool(): Pool | null {
   const connectionString = 
+    process.env.mtx_POSTGRES_URL || 
+    process.env.mtx_DATABASE_URL || 
+    process.env.mtx_POSTGRES_PRISMA_URL || 
+    process.env.mtx_DATABASE_URL_UNPOOLED || 
     process.env.POSTGRES_URL || 
     process.env.DATABASE_URL || 
     process.env.POSTGRES_PRISMA_URL ||
